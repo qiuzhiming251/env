@@ -1,0 +1,16 @@
+syntax = "proto3";
+
+package cem.message.sensor;
+
+message Ibs20msPdu08 {
+    uint64 soc_recv_timestamp = 1;
+    float ivselatacc = 2;
+    uint32 ivselatacccrc = 3;
+    uint32 ivselataccrc = 4;
+    uint32 ivselataccv = 5;
+    float ivselongtacc = 6;
+    uint32 ivselongtaccv = 7;
+    float ivehdynyawrate = 8;
+    uint32 ivehdynyawratev = 9;
+    uint32 e2e_status = 10;
+}

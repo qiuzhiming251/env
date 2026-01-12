@@ -1,0 +1,26 @@
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_test")
+load("//tools:cpplint.bzl", "cpplint")
+
+package(default_visibility = ["//visibility:public"])
+
+cc_test(
+   name = "kde_test",
+   size = "small",
+   srcs = glob(["kde_test.cc",
+           "geometry_fusion/kde_regression/*.cc",
+           "geometry_fusion/spatial_relationships/*.cc",
+    ]),
+   includes = [".",
+    "traffic_road",
+    "geometry_fusion/kde_regression/",
+    "geometry_fusion/spatial_relationships/",
+    ],
+   deps = [
+        "@com_google_googletest//:gtest_main",
+        "@eigen",
+   ],
+)
+
+
+
+cpplint()

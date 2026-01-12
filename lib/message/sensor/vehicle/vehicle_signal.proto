@@ -1,0 +1,18 @@
+syntax = "proto3";
+
+import "message/common/header.proto";
+
+package cem.message.sensor;
+
+message VehicleSignal {
+    cem.message.common.Header header = 1;
+    float steering_wheel_angle = 2;  // degree
+    float dynamic_yaw_rate = 3;      // rad·s-1
+    uint32 stand_still = 4;
+    float average_speed = 5;  // m·s-1
+    uint32 left_direction_light = 6;
+    uint32 right_direction_light = 7;
+    float lat_accel = 8;    // m·s-2
+    float lon_accel = 9;    // m·s-2
+    uint32 gear_info = 10;  // p:1 r:2 n:3 f:4~11 reserve:12~15
+}

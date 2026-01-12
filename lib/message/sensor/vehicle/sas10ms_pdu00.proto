@@ -1,0 +1,19 @@
+syntax = "proto3";
+
+package cem.message.sensor;
+
+message Sas10msPdu00 {
+    uint32 isas_010ms_group00_reserve01 = 1;
+    uint32 isas_010ms_group00_reserve02 = 2;
+    float istrgwhlang = 3;
+    uint32 istrgwhlangalvrc = 4;
+    int32 istrgwhlanggrd = 5;
+    uint32 istrgwhlangsnsrcrc = 6;
+    uint32 istrgwhlangsnsrcalsts = 7;
+    uint32 istrgwhlangsnsrflt = 8;
+    uint32 istrgwhlangsnsrinid = 9;
+    uint32 istrgwhlangsnsrmultcapb = 10;
+    uint32 istrgwhlangv = 11;
+    uint64 timestamp = 12;
+    uint32 e2e_status = 13;
+}

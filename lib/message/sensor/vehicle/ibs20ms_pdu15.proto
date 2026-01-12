@@ -1,0 +1,18 @@
+syntax = "proto3";
+
+package cem.message.sensor;
+
+message Ibs20msPdu15 {
+    uint32 iibs_20ms_group15_reserve01 = 1;
+    float ivehspdavg = 2;
+    uint32 ivehspdavgalvrc = 3;
+    uint32 ivehspdavgcrc = 4;
+    float ivehspdavgdrvn = 5;
+    uint32 ivehspdavgdrvnsrc = 6;
+    uint32 ivehspdavgdrvnv = 7;
+    float ivehspdavgnondrvn = 8;
+    uint32 ivehspdavgnondrvnv = 9;
+    uint32 ivehspdavgv = 10;
+    uint64 timestamp = 11;
+    uint32 e2e_status = 12;
+}
