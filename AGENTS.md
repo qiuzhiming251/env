@@ -69,7 +69,7 @@ Navigation recommendation related code.
 Other supporting files in this module:
 - `lib/sd_navigation/GeometryLaneMatcher.cpp`: geometry matching helpers.
 - `lib/sd_navigation/NavigationParams.cpp`: navigation parameter definitions.
-- `lib/sd_navigation/SDMapTopoExtract.cpp`: SD map topology extraction helpers.
+- `lib/sd_navigation/SDMapTopoExtract.cpp`: SD map and LD map topology extraction helpers.
 
 ### lib/perception_and_ld_map_fusion/
 Perception-map fusion module.
@@ -82,6 +82,7 @@ Focus submodule:
 Related preprocessing submodule:
 - `lib/perception_and_ld_map_fusion/data_preprocessor/bev_map_preprocessor.cc`
   - BEV data preprocessing.
+  - `TopoProcessor` is invoked in `fusion_manager.cc` (`FusionManager::Process`) to repair/enrich BEV lane topology using lane-map matching and topology query callbacks.
 - `lib/perception_and_ld_map_fusion/data_preprocessor/ld_map_preprocessor.cc`
   - LD map data preprocessing and scenario/mode related preprocessing logic.
 - `lib/perception_and_ld_map_fusion/data_preprocessor/build_lane_topology.cc`
@@ -90,6 +91,18 @@ Related preprocessing submodule:
   - Lane type checking/adjustment helpers.
 - `lib/perception_and_ld_map_fusion/data_preprocessor/traffic_flow_manager.cpp`
   - Traffic flow related preprocessing logic.
+
+### lib/localmap_construction/ and lib/map_fusion/
+LocalMap construction/output shaping modules.
+
+- `lib/map_fusion/extend_lane.cpp`
+  - Lane centerline and lane-marker extension with constraints (non-intersection, emergency-lane/crosswalk limits, and smoothing).
+- `lib/map_fusion/lane_guidance.cpp`
+  - Structured road/section graph construction for downstream guidance.
+  - Includes merge/split topology integration, section cutting, lane ordering, recommendation attachment, marker-lane binding, and output cleanup.
+- `lib/map_fusion/road_divider.cpp`
+  - Diversion-zone based route/subpath splitting.
+  - Assigns lane `road_id` used by lane guidance section-id assembly (`road_id * 100 + x`).
 
 ### lib/message/
 Internal message structures used by env pipeline.

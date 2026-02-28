@@ -18,7 +18,7 @@ Notes:
 3. `lib/pre_processor/*`: preprocess routing map and BEV map.
 4. `lib/perception_and_ld_map_fusion/*`: map-perception matching/fusion + map source switch.
 5. `lib/sd_navigation/*`: lane-level navigation recommendation (highway/city branches).
-6. `lib/localmap_construction/*` + `lib/map_fusion/*`: construct and enrich local map output.
+6. `lib/localmap_construction/*` + `lib/map_fusion/*`: construct and enrich local map output (structured roads/sections, lane guidance, and topology-safe geometry).
 7. `communication/messenger.cpp`: publish outputs and diagnostics.
 
 ## File Map
@@ -94,14 +94,14 @@ Notes:
 - `lib/localmap_construction/crossroad_construction/virtual_egoroad_processor.cpp`: virtual ego-road generation/refinement.
 
 ### lib/map_fusion/
-- `lib/map_fusion/extend_lane.cpp`: lane extension logic.
-- `lib/map_fusion/lane_guidance.cpp`: lane guidance generation and output alignment.
+- `lib/map_fusion/extend_lane.cpp`: lane centerline/lane-marker extension with safety constraints (non-intersection, emergency/crosswalk limits, boundary constraints, smoothing).
+- `lib/map_fusion/lane_guidance.cpp`: structured road section graph construction for downstream guidance, including merge/split topology fusion, section cutting, lane ordering, recommendation mounting, marker binding/coloring, and output cleanup.
 - `lib/map_fusion/map_fusion.cpp`: fused map assembly logic.
-- `lib/map_fusion/road_divider.cpp`: road divider related fusion logic.
+- `lib/map_fusion/road_divider.cpp`: diversion-zone based route/subpath split and lane `road_id` assignment (used for `section_id = road_id * 100 + x` generation in lane guidance).
 - `lib/map_fusion/speed_limit_fusion.cpp`: speed limit fusion from multiple sources.
 
 ### lib/perception_and_ld_map_fusion/
-- `lib/perception_and_ld_map_fusion/fusion_manager.cc`: main manager for BEV/LD preprocessing, matching, and fusion control.
+- `lib/perception_and_ld_map_fusion/fusion_manager.cc`: main manager for BEV/LD preprocessing, matching, and fusion control; calls `bev_map_preprocessor_->TopoProcessor(...)` in `Process()` to repair/enrich BEV topology from match/topology query results.
 
 #### common/
 - `lib/perception_and_ld_map_fusion/common/kalman_filter.cc`: Kalman filter helper for fusion internals.
@@ -116,7 +116,7 @@ Notes:
 - `lib/perception_and_ld_map_fusion/data_fusion/road_slice.cc`: road slicing representation/logic.
 
 #### data_preprocessor/
-- `lib/perception_and_ld_map_fusion/data_preprocessor/bev_map_preprocessor.cc`: BEV preprocessing for fusion pipeline.
+- `lib/perception_and_ld_map_fusion/data_preprocessor/bev_map_preprocessor.cc`: BEV preprocessing for fusion pipeline; `TopoProcessor` repairs/augments lane topology with lane-map match result and split/merge/connect cues.
 - `lib/perception_and_ld_map_fusion/data_preprocessor/build_lane_topology.cc`: lane topology build/repair in preprocessing.
 - `lib/perception_and_ld_map_fusion/data_preprocessor/lane_type_checker.cpp`: lane type checking/normalization.
 - `lib/perception_and_ld_map_fusion/data_preprocessor/ld_map_preprocessor.cc`: LD map preprocessing, mode/scenario related preparation.

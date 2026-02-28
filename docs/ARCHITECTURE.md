@@ -110,6 +110,10 @@ sequenceDiagram
   - `data_fusion/match_maker.cc`
   - `data_fusion/multi_source_data_mixer.cc`
   - `data_fusion/geometry_match_info.cc`
+- Topology repair in fusion mainline:
+  - `FusionManager::Process()` invokes `bev_map_preprocessor_->TopoProcessor(...)` after lane-map matching.
+  - Input (core): lane-map match result (`bev_ld_match`) + topology query callbacks (`LaneSplitGetter`, `LaneMergeGetter`, `LaneTypeGetter`) and LD split/merge/connect matching info.
+  - Output: BEV map topology repaired/enriched in-place for downstream local map construction.
 
 5. Navigation recommendation stage
 - `lib/sd_navigation/`
@@ -128,6 +132,41 @@ sequenceDiagram
 - `lib/map_fusion/`
 - `communication/messenger.cpp`
 - Publish local map, env status, and diagnostics.
+- LocalMap objective:
+  - Maintain a real-time local map reflecting nearby environment changes, including landmark tracking, road structure construction, traffic-light relation binding, and virtual-lane generation.
+
+## LocalMap Key Submodules
+### extend_lane (`lib/map_fusion/extend_lane.cpp`)
+- Extends lane centerlines and lane markers with constraints for geometric validity and stability.
+- Constraint examples:
+  - avoid centerline extension intersections
+  - do not extend emergency lanes
+  - limit extension around crosswalk areas
+  - constrain centerline extension with lane marker boundaries
+  - smooth extended lane/lane-marker geometry
+
+### lane_guidance (`lib/map_fusion/lane_guidance.cpp`)
+- Builds downstream-facing structured road sections/graphs and attaches recommendation outputs.
+- Topology + geometry processing path:
+  - `SetBevLaneMergeTopoNew`: inject LD merge topology into BEV lanes.
+  - `InsertMergeSplitPoints`: build merge/split geometric connection points and smooth transitions.
+  - `FindMultiLayerCutPoints`: search hierarchical cut points for section partition.
+  - `CalculateCutLine` + `CutLaneMarkers` + `CutLanes`: generate cut lines and cut section geometry.
+  - `CalculateNaviStart`: compute ego section longitudinal offset to active guidance section boundary.
+  - `LaneGuidanceByRouteLanes`: mount recommended lanes onto cut section graph and index forward from tail virtual sections.
+  - `ResetLanePosition` + `CaculateLanePosition`: lateral lane ordering within each section.
+  - `CutLaneMarkerWithTypeSeg` + `CutSectionWithTypeSeg`: segmentation by lane marker type segments.
+  - `AssignLaneMarkerColor` + `AssignSectionLaneMarkerColor`: lane marker color assignment.
+  - `BoundLaneMarkerWithLane` + `BoundSectionLaneMarkerWithLane`: lane/lane-marker adjacency binding.
+  - `RemoveRepeatPoint` + `RemoveSectionRepeatPoint` + `RemoveLanemarkerRepeatPoint` + `RemoveSectionLanemarkerRepeatPoint` + `RemoveAbnormalLane`: output safety guards (dedup/filter abnormal geometry).
+
+### road_divider (`lib/map_fusion/road_divider.cpp`)
+- `FindDiversionRouteAndSubpath(bev_map, sections)`:
+  - splits ego-near sections into multiple branches using diversion-zone geometry;
+  - sets ego branch as route and others as subpaths.
+- `Process(BevMapInfo& bev_map)`:
+  - assigns `road_id` for each `bev_map.lane_infos` lane;
+  - lane section id follows `section_id = road_id * 100 + x` in lane guidance assembly.
 
 ## Module Responsibilities
 ### app/
