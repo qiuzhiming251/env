@@ -22,17 +22,26 @@ void MapSourceSwitch::Process() {
   JudgeDrivingScenario();
   SetMapMatchStatus();
   LoadMapEvent();
-  if (IsConditionSatisfiedToUseHdMap()) {
-    if (is_on_freeway_) {
-      HNOAMapSourceSwitch();
-    } else {
-      CNOAMapSourceSwitch();
-    }
-    ForceChangeSourceToPerceptionMap();
-  } else {
+
+  if (!IsConditionSatisfiedToUseHdMap()) {
     use_perception_ = true;
+    IsEgoCloseToUnreliableRoad();
+    FinalizeMapSourceStatus();
+    return;
   }
+
+  if (is_on_freeway_) {
+    HNOAMapSourceSwitch();
+  } else {
+    CNOAMapSourceSwitch();
+  }
+  ForceChangeSourceToPerceptionMap();
+
   IsEgoCloseToUnreliableRoad();
+  FinalizeMapSourceStatus();
+}
+
+void MapSourceSwitch::FinalizeMapSourceStatus() {
   if (use_perception_) {
     env_status_->set_map_source(
         EnvStatus::EnvSource::EnvStatus_EnvSource_PERCEPTION_MAP);
@@ -160,15 +169,13 @@ void MapSourceSwitch::JudgeDrivingScenario() {
 }
 
 bool MapSourceSwitch::IsConditionSatisfiedToUseHdMap() {
-  if (IsMapDataValid()) {
-    if (!IsDowngradeNoaToICC()) {
-      if (!IsNoaActivated()) {
-        return false;
-      }
-    } else {
-      return false;
-    }
-  } else {
+  if (!IsMapDataValid()) {
+    return false;
+  }
+  if (IsDowngradeNoaToICC()) {
+    return false;
+  }
+  if (!IsNoaActivated()) {
     return false;
   }
   return true;
@@ -176,6 +183,7 @@ bool MapSourceSwitch::IsConditionSatisfiedToUseHdMap() {
 
 void MapSourceSwitch::EvaluateEgoLaneMatchStatus(
     const GeometryMatchResult& ego_lane_match_info) {
+  (void)ego_lane_match_info;
   // is_ego_lane_matched_ = ego_lane_match_info.is_matched;
 
   // env_status_->mutable_left_laneline_match_info()->set_average_offset(
@@ -212,41 +220,42 @@ void MapSourceSwitch::EvaluateEgoLaneMatchStatus(
 
 void MapSourceSwitch::HNOAMapSourceSwitch() {
   if (is_in_area_should_use_hdmap_) {
-    // 在匝道范围内
-    if (!is_ego_lane_matched_ && use_perception_) {
-      // 如果是切图帧没匹配上, 暂时不切图
+    const bool cannot_switch_to_hd_this_frame =
+        !is_ego_lane_matched_ && use_perception_;
+    if (cannot_switch_to_hd_this_frame) {
       env_status_->set_hd_map_suppression_reason(
           EnvStatus::MapSuppressionReason::
               EnvStatus_MapSuppressionReason_UNABLE_TO_MATCH_PERCEPTION_WITH_HD_MAP);
-    } else {
-      // 此前也是用图, 或者切图帧且匹配上了, 就用图
+      return;
+    }
+
+    env_status_->set_perception_map_suppression_reason(
+        EnvStatus::MapSuppressionReason::
+            EnvStatus_MapSuppressionReason_EGO_IN_THE_RAMP);
+    use_perception_ = false;
+    return;
+  }
+
+  const bool keep_hd_map_temporarily =
+      !use_perception_ && (ego_is_changing_lane_ || !is_ego_lane_matched_);
+  if (keep_hd_map_temporarily) {
+    if (ego_is_changing_lane_) {
       env_status_->set_perception_map_suppression_reason(
           EnvStatus::MapSuppressionReason::
-              EnvStatus_MapSuppressionReason_EGO_IN_THE_RAMP);
-      use_perception_ = false;
-    }
-  } else {
-    // 非匝道范围内
-    if (!use_perception_ && (ego_is_changing_lane_ || !is_ego_lane_matched_)) {
-      // 切感知帧, 自车正在换道, 换道结束再切图
-      if (ego_is_changing_lane_) {
-        env_status_->set_perception_map_suppression_reason(
-            EnvStatus::MapSuppressionReason::
-                EnvStatus_MapSuppressionReason_EGO_IS_CHANGING_LANE);
-      } else if (!is_ego_lane_matched_) {
-        env_status_->set_perception_map_suppression_reason(
-            EnvStatus::MapSuppressionReason::
-                EnvStatus_MapSuppressionReason_UNABLE_TO_MATCH_PERCEPTION_WITH_HD_MAP);
-      }
-    } else {
-      use_perception_ = true;
-      env_status_->set_hd_map_suppression_reason(
+              EnvStatus_MapSuppressionReason_EGO_IS_CHANGING_LANE);
+    } else if (!is_ego_lane_matched_) {
+      env_status_->set_perception_map_suppression_reason(
           EnvStatus::MapSuppressionReason::
-              EnvStatus_MapSuppressionReason_EGO_NOT_IN_THE_RAMP);
+              EnvStatus_MapSuppressionReason_UNABLE_TO_MATCH_PERCEPTION_WITH_HD_MAP);
     }
+    return;
   }
-}
 
+  use_perception_ = true;
+  env_status_->set_hd_map_suppression_reason(
+      EnvStatus::MapSuppressionReason::
+          EnvStatus_MapSuppressionReason_EGO_NOT_IN_THE_RAMP);
+}
 void MapSourceSwitch::CNOAMapSourceSwitch() {
   if (!use_perception_) {
     // 上一帧使用地图
@@ -496,14 +505,14 @@ bool MapSourceSwitch::IsDowngradeNoaToICC() {
 
   if (IsDowngradeCausedByLowPrecisionZone()) {
     return true;
-  } else {
-    if (is_on_freeway_) {
-      return IsDowngradeCausedByEgoLaneNotMatched();
-    } else {
-      return false;
-      return IsDowngradeCausedByPerceptionMapStillInUseNearJunction();
-    }
   }
+
+  if (is_on_freeway_) {
+    return IsDowngradeCausedByEgoLaneNotMatched();
+  }
+
+  // Keep legacy CNOA behavior unchanged.
+  return false;
 }
 
 bool MapSourceSwitch::IsDowngradeCausedByLowPrecisionZone() {

@@ -62,6 +62,8 @@ class MapSourceSwitch {
 
   void CNOAMapSourceSwitch();
 
+  void FinalizeMapSourceStatus();
+
   bool IsDowngradeNoaToICC();
 
   bool IsDowngradeCausedByLowPrecisionZone();
