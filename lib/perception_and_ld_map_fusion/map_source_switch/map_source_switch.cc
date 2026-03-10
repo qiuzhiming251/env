@@ -23,6 +23,9 @@ void MapSourceSwitch::Process() {
   SetMapMatchStatus();
   LoadMapEvent();
 
+  GeometryMatchResult result;
+  SetEgoLaneMatchingInfo(result);
+
   if (!IsConditionSatisfiedToUseHdMap()) {
     use_perception_ = true;
     IsEgoCloseToUnreliableRoad();
