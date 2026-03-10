@@ -1,9 +1,92 @@
 #include "lib/perception_and_ld_map_fusion/map_source_switch/map_source_switch.h"
 
+#include <cmath>
+
 using namespace byd::msg::orin::routing_map;
 
 namespace cem {
 namespace fusion {
+
+namespace {
+
+constexpr double kMapMatchTimestampToleranceSec = 3.0;
+constexpr double kMapDataMinAvailableLength = 50.0;
+constexpr double kSpecialJunctionSearchDistance = 200.0;
+constexpr double kPreviousJunctionSearchDistance = 100.0;
+constexpr double kSwitchFailureSnapshotLength = 200.0;
+constexpr int kLocalizationNotReliableFrameThreshold = 3;
+
+bool IsJunctionSection(const SectionInfo* section) {
+  return (section->link_type & static_cast<uint32_t>(
+                                   cem::message::env_model::LDLinkTypeMask::
+                                       LT_ROUNDABOUT)) ||
+         (section->link_type & static_cast<uint32_t>(
+                                   cem::message::env_model::LDLinkTypeMask::
+                                       LT_IC)) ||
+         (section->link_type & static_cast<uint32_t>(
+                                   cem::message::env_model::LDLinkTypeMask::
+                                       LT_JCT));
+}
+
+const SectionInfo* GetFirstValidLinkedSection(
+    const std::vector<uint64_t>& linked_section_ids,
+    const FusionManager* fusion_mgr) {
+  for (const auto id : linked_section_ids) {
+    const auto* section = fusion_mgr->GetLdSection(id);
+    if (section != nullptr) {
+      return section;
+    }
+  }
+  return nullptr;
+}
+
+void ForceUsePerceptionMap(
+    std::vector<std::pair<uint64_t, double>>& route_snapshot,
+    bool& use_perception, const std::shared_ptr<EnvStatus>& env_status,
+    const EnvStatus::MapSuppressionReason reason) {
+  route_snapshot.clear();
+  use_perception = true;
+  env_status->set_hd_map_suppression_reason(reason);
+}
+
+void BuildSwitchFailureRouteSnapshot(
+    const FusionManager* fusion_mgr, const SectionInfo* front_section,
+    const double front_section_remaining_length,
+    std::vector<std::pair<uint64_t, double>>& route_snapshot) {
+  route_snapshot.clear();
+  route_snapshot.emplace_back(front_section->id, front_section_remaining_length);
+  double total_length = route_snapshot.front().second;
+  const SectionInfo* cur_section = front_section;
+  while (total_length < kSwitchFailureSnapshotLength) {
+    const auto* successor_section = GetFirstValidLinkedSection(
+        cur_section->successor_section_id_list, fusion_mgr);
+    if (successor_section == nullptr) {
+      break;
+    }
+    cur_section = successor_section;
+    route_snapshot.emplace_back(cur_section->id, cur_section->length);
+    total_length += cur_section->length;
+  }
+}
+
+bool ComputeSwitchFailureDistance(
+    const std::vector<std::pair<uint64_t, double>>& route_snapshot,
+    const uint64_t front_section_id, const double front_section_remaining_length,
+    double* switch_failure_distance) {
+  if (switch_failure_distance == nullptr) {
+    return false;
+  }
+  *switch_failure_distance = -front_section_remaining_length;
+  for (const auto& section : route_snapshot) {
+    *switch_failure_distance += section.second;
+    if (section.first == front_section_id) {
+      return true;
+    }
+  }
+  return false;
+}
+
+}  // namespace
 
 MapSourceSwitch::MapSourceSwitch() {}
 
@@ -11,7 +94,7 @@ MapSourceSwitch::~MapSourceSwitch() {}
 
 void MapSourceSwitch::Init(const FusionManager* fusion_mgr) {
   fusion_mgr_ = fusion_mgr;
-  env_status_ = std::make_unique<EnvStatus>();
+  env_status_ = std::make_shared<EnvStatus>();
 }
 
 void MapSourceSwitch::Process() {
@@ -96,7 +179,17 @@ void MapSourceSwitch::SetEgoLaneChangingStatus() {
 
 void MapSourceSwitch::SetMapMatchStatus() {
   map_match_status_.valid = false;
-  auto time_now = GetMwTimeNowSec();
+  const auto time_now = GetMwTimeNowSec();
+
+  auto update_map_match_status =
+      [this, time_now](const uint64_t sequence_num, const double timestamp,
+                       const cem::message::sensor::LocationLevel level) {
+        map_match_status_.valid = true;
+        map_match_status_.header.recv_timestamp = time_now;
+        map_match_status_.header.sequence_num = sequence_num;
+        map_match_status_.header.timestamp = timestamp;
+        map_match_status_.location_level = level;
+      };
 
   if (function_mode_ == LdMapProcessor::FunctionMode::kHNOA) {
     MapMatchResultBaiduPtr map_match_result = nullptr;
@@ -104,15 +197,13 @@ void MapSourceSwitch::SetMapMatchStatus() {
     if (map_match_result == nullptr) {
       return;
     }
-    if (fabs(time_now - map_match_result->header.timestamp) > 3) {
+    if (std::fabs(time_now - map_match_result->header.timestamp) >
+        kMapMatchTimestampToleranceSec) {
       return;
     }
-    map_match_status_.valid = true;
-    map_match_status_.header.recv_timestamp = time_now;
-    map_match_status_.header.sequence_num =
-        map_match_result->header.sequence_num;
-    map_match_status_.header.timestamp = map_match_result->header.timestamp;
-    map_match_status_.location_level = map_match_result->location_level;
+    update_map_match_status(map_match_result->header.sequence_num,
+                            map_match_result->header.timestamp,
+                            map_match_result->location_level);
   } else {
     MapMatchResultPtr map_match_result = nullptr;
     SensorDataManager::Instance()->GetLatestSensorFrame(map_match_result);
@@ -123,19 +214,16 @@ void MapSourceSwitch::SetMapMatchStatus() {
         !map_match_result->has_location_level()) {
       return;
     }
-    if (fabs(time_now - map_match_result->header().measurement_timestamp()) >
-        3) {
+    if (std::fabs(time_now -
+                  map_match_result->header().measurement_timestamp()) >
+        kMapMatchTimestampToleranceSec) {
       return;
     }
-    map_match_status_.valid = true;
-    map_match_status_.header.recv_timestamp = time_now;
-    map_match_status_.header.sequence_num =
-        map_match_result->header().sequence_num();
-    map_match_status_.header.timestamp =
-        map_match_result->header().measurement_timestamp();
-    map_match_status_.location_level =
+    update_map_match_status(
+        map_match_result->header().sequence_num(),
+        map_match_result->header().measurement_timestamp(),
         static_cast<cem::message::sensor::LocationLevel>(
-            map_match_result->location_level());
+            map_match_result->location_level()));
   }
 }
 
@@ -146,23 +234,26 @@ void MapSourceSwitch::LoadMapEvent() {
 
 void MapSourceSwitch::JudgeDrivingScenario() {
   function_mode_ = fusion_mgr_->GetFunctionMode();
+  const bool latest_is_on_freeway = fusion_mgr_->IsOnFreeway();
   if (function_mode_ == LdMapProcessor::FunctionMode::kHNOA) {
-    is_on_freeway_ = fusion_mgr_->IsOnFreeway();
+    is_on_freeway_ = latest_is_on_freeway;
   } else {
     // 当上一帧和这一帧地图中给定城区高速切换时,考虑切换逻辑
-    if (fusion_mgr_->IsOnFreeway() != is_on_freeway_) {
+    if (latest_is_on_freeway != is_on_freeway_) {
       // 城区/高速切换逻辑的情况
       // 1. 已经在用感知的话就直接切换
       // 2.
       // 城区用图，但是过了最后一个路口超过90米，直接切高速，不等到100m防止跳变
       // 3. 高速用图，但是即将靠近路口<200米，切城区过路口方案
-      if (use_perception_ ||
+      const bool should_switch_to_latest_scenario =
+          use_perception_ ||
           (!use_perception_ && (!is_on_freeway_) &&
            (distance_to_previous_junction_ > 90 &&
             distance_to_next_junction_ <= 100)) ||
           (!use_perception_ && is_on_freeway_ &&
-           (distance_to_next_junction_ < 200))) {
-        is_on_freeway_ = fusion_mgr_->IsOnFreeway();
+           (distance_to_next_junction_ < 200));
+      if (should_switch_to_latest_scenario) {
+        is_on_freeway_ = latest_is_on_freeway;
       } else {
         // noting to do
       }
@@ -201,6 +292,12 @@ void MapSourceSwitch::EvaluateEgoLaneMatchStatus(
   env_status_->clear_left_laneline_match_info();
   GeometryMatchResult result;
   fusion_mgr_->GetEgoLaneMatchResult(result);
+    SD_COARSE_MATCH_LOG << "[EvaluateEgoLaneMatchStatus] GeometryMatchResult: "
+                      << "fail_reason=" << static_cast<int>(result.fail_reason) << ", is_matched=" << result.is_matched
+                                            << ", left_offset_average=" << result.left_offset_average << ", left_offset_max=" << result.left_offset_max
+                      << ", right_offset_average=" << result.right_offset_max
+                      << ", ld_line_c0=" << result.ld_line_c0 << ", bev_line_c0=" << result.bev_line_c0;
+
   is_ego_lane_match_offset_in_range_ = result.is_matched;
   is_ego_lane_matched_ = is_ego_lane_match_offset_in_range_;
   if (is_ego_lane_match_offset_in_range_) {
@@ -261,83 +358,80 @@ void MapSourceSwitch::HNOAMapSourceSwitch() {
 }
 void MapSourceSwitch::CNOAMapSourceSwitch() {
   if (!use_perception_) {
-    // 上一帧使用地图
     if (is_in_area_should_use_hdmap_) {
-      // 1. 如果当前帧还在路口范围内, 维持用图。
       if (is_ego_in_junction_range_) {
         env_status_->set_perception_map_suppression_reason(
             EnvStatus::MapSuppressionReason::
                 EnvStatus_MapSuppressionReason_EGO_IN_JUNCTION);
       } else {
-        // 2. 如果当前帧在路口多岔口场景, 维持用图。
         env_status_->set_perception_map_suppression_reason(
             EnvStatus::MapSuppressionReason::
                 EnvStatus_MapSuppressionReason_EGO_IN_MULTIPLE_CONSECUTIVE_ROAD_INTERSECTIONS);
       }
-    } else {
-      // 3. 如果当前帧不在路口范围内,也不在多分岔口场景下，考虑切图。
-      if ((distance_to_next_junction_ - BEV_TO_MAP_DISTANCE_THRESHOLD <
-           NEXT_USE_BEV_AREA_DISTANCE_LIMIT) &&
-          (next_low_precision_start_offset_ >
-           distance_to_section_over_first_junction_)) {
-        // 3.1 本该切图了,
-        // 但是距离下一个该切图的位置不足100米的话就别切感知了，怪麻烦
-        // 的。当然，如果下一个路口之结束前有低精区域就不要因为怕小麻烦而引来了大麻烦
-        env_status_->set_perception_map_suppression_reason(
-            EnvStatus::MapSuppressionReason::
-                EnvStatus_MapSuppressionReason_EGO_BETWEEN_TWO_VERY_CLOSED_JUNCTIONS);
-      } else {
-        // 3.2
-        // 距离下个切图点还挺远的话，此时感知和地图能匹配上而且自车没有在换道，那就
-        //     切感知, 否则仍然维持用图。
-        if (!is_ego_lane_matched_) {
-          env_status_->set_perception_map_suppression_reason(
-              EnvStatus::MapSuppressionReason::
-                  EnvStatus_MapSuppressionReason_UNABLE_TO_MATCH_PERCEPTION_WITH_HD_MAP);
-        } else if (ego_is_changing_lane_) {
-          env_status_->set_perception_map_suppression_reason(
-              EnvStatus::MapSuppressionReason::
-                  EnvStatus_MapSuppressionReason_EGO_IS_CHANGING_LANE);
-        } else {
-          use_perception_ = true;
-          env_status_->set_hd_map_suppression_reason(
-              EnvStatus::MapSuppressionReason::
-                  EnvStatus_MapSuppressionReason_EGO_PASSED_JUNCTION);
-        }
-      }
+      return;
     }
-  } else {
-    // 上一帧使用感知
-    // 如果当前帧在路口中，或者在多岔口场景下
-    if (is_in_area_should_use_hdmap_) {
-      // 1. 如果当前帧在路口范围内, 且成功匹配, 则切图。
-      if (is_ego_lane_matched_) {
-        use_perception_ = false;
-        if (is_ego_in_junction_range_) {
-          env_status_->set_perception_map_suppression_reason(
-              EnvStatus::MapSuppressionReason::
-                  EnvStatus_MapSuppressionReason_EGO_IN_JUNCTION);
-        } else {
-          env_status_->set_perception_map_suppression_reason(
-              EnvStatus::MapSuppressionReason::
-                  EnvStatus_MapSuppressionReason_EGO_IN_MULTIPLE_CONSECUTIVE_ROAD_INTERSECTIONS);
-        }
-      } else {
-        if (distance_to_next_junction_ <
-                LD_MAP_TO_PERCEPTION_FAILURE_WARNING_LIMIT &&
-            is_junction_from_hd_map_) {
-          sensor_status_info_.warning_type =
-              SensorWarningType::SWITCH_TO_HD_MAP_FAILURE;
-        }
-        env_status_->set_hd_map_suppression_reason(
-            EnvStatus::MapSuppressionReason::
-                EnvStatus_MapSuppressionReason_UNABLE_TO_MATCH_PERCEPTION_WITH_HD_MAP);
-      }
-    } else {
-      env_status_->set_hd_map_suppression_reason(
+
+    const bool close_to_next_switch_point =
+        (distance_to_next_junction_ - BEV_TO_MAP_DISTANCE_THRESHOLD <
+         NEXT_USE_BEV_AREA_DISTANCE_LIMIT) &&
+        (next_low_precision_start_offset_ >
+         distance_to_section_over_first_junction_);
+    if (close_to_next_switch_point) {
+      env_status_->set_perception_map_suppression_reason(
           EnvStatus::MapSuppressionReason::
-              EnvStatus_MapSuppressionReason_EGO_NOT_CLOSE_ENOUGH_TO_JUNCTION);
+              EnvStatus_MapSuppressionReason_EGO_BETWEEN_TWO_VERY_CLOSED_JUNCTIONS);
+      return;
     }
+
+    if (!is_ego_lane_matched_) {
+      env_status_->set_perception_map_suppression_reason(
+          EnvStatus::MapSuppressionReason::
+              EnvStatus_MapSuppressionReason_UNABLE_TO_MATCH_PERCEPTION_WITH_HD_MAP);
+      return;
+    }
+    if (ego_is_changing_lane_) {
+      env_status_->set_perception_map_suppression_reason(
+          EnvStatus::MapSuppressionReason::
+              EnvStatus_MapSuppressionReason_EGO_IS_CHANGING_LANE);
+      return;
+    }
+
+    use_perception_ = true;
+    env_status_->set_hd_map_suppression_reason(
+        EnvStatus::MapSuppressionReason::
+            EnvStatus_MapSuppressionReason_EGO_PASSED_JUNCTION);
+    return;
+  }
+
+  if (!is_in_area_should_use_hdmap_) {
+    env_status_->set_hd_map_suppression_reason(
+        EnvStatus::MapSuppressionReason::
+            EnvStatus_MapSuppressionReason_EGO_NOT_CLOSE_ENOUGH_TO_JUNCTION);
+    return;
+  }
+
+  if (!is_ego_lane_matched_) {
+    if (distance_to_next_junction_ <
+            LD_MAP_TO_PERCEPTION_FAILURE_WARNING_LIMIT &&
+        is_junction_from_hd_map_) {
+      sensor_status_info_.warning_type =
+          SensorWarningType::SWITCH_TO_HD_MAP_FAILURE;
+    }
+    env_status_->set_hd_map_suppression_reason(
+        EnvStatus::MapSuppressionReason::
+            EnvStatus_MapSuppressionReason_UNABLE_TO_MATCH_PERCEPTION_WITH_HD_MAP);
+    return;
+  }
+
+  use_perception_ = false;
+  if (is_ego_in_junction_range_) {
+    env_status_->set_perception_map_suppression_reason(
+        EnvStatus::MapSuppressionReason::
+            EnvStatus_MapSuppressionReason_EGO_IN_JUNCTION);
+  } else {
+    env_status_->set_perception_map_suppression_reason(
+        EnvStatus::MapSuppressionReason::
+            EnvStatus_MapSuppressionReason_EGO_IN_MULTIPLE_CONSECUTIVE_ROAD_INTERSECTIONS);
   }
 }
 
@@ -371,30 +465,16 @@ bool MapSourceSwitch::IsMapDataValid() {
     double distance_to_back =
         front_section->length - routing_map->route.navi_start.s_offset;
     auto cur_section = front_section;
-    while (true) {
-      if (distance_to_back > 50.0) {
+    while (distance_to_back <= kMapDataMinAvailableLength) {
+      const auto* next_section = GetFirstValidLinkedSection(
+          cur_section->successor_section_id_list, fusion_mgr_);
+      if (next_section == nullptr) {
         break;
       }
-      if (cur_section->successor_section_id_list.empty()) {
-        break;
-      }
-      bool found_successor_section = false;
-      for (auto id : cur_section->successor_section_id_list) {
-        if (fusion_mgr_->GetLdSection(id) == nullptr) {
-          continue;
-        }
-        cur_section = fusion_mgr_->GetLdSection(id);
-        distance_to_back += cur_section->length;
-        found_successor_section = true;
-        break;
-      }
-      if (!found_successor_section) {
-        break;
-      }
+      cur_section = next_section;
+      distance_to_back += cur_section->length;
     }
-    if (distance_to_back > 50) {
-      ego_in_map_range = true;
-    }
+    ego_in_map_range = (distance_to_back > kMapDataMinAvailableLength);
     if (ego_in_map_range) {
       /*
       double max_y = -1000.0;
@@ -628,13 +708,16 @@ bool MapSourceSwitch::IsDowngradeCausedByPerceptionMapStillInUseNearJunction() {
 
 bool MapSourceSwitch::IsDowngradeCausedByEgoLaneNotMatched() {
   if (!is_on_freeway_ ||
-      (use_perception_ && localization_not_reliable_frame_cnt_ <= 3) ||
+      (use_perception_ &&
+       localization_not_reliable_frame_cnt_ <=
+           kLocalizationNotReliableFrameThreshold) ||
       !map_match_status_.valid) {
     localization_not_reliable_frame_cnt_ = 0;
     return false;
   }
 
-  if (localization_not_reliable_frame_cnt_ <= 3) {
+  if (localization_not_reliable_frame_cnt_ <=
+      kLocalizationNotReliableFrameThreshold) {
     if ((map_match_status_.location_level !=
          cem::message::sensor::LocationLevel::Roadlevel) ||
         is_ego_lane_matched_) {
@@ -651,7 +734,8 @@ bool MapSourceSwitch::IsDowngradeCausedByEgoLaneNotMatched() {
   }
 
   localization_not_reliable_frame_cnt_++;
-  if (localization_not_reliable_frame_cnt_ > 3) {
+  if (localization_not_reliable_frame_cnt_ >
+      kLocalizationNotReliableFrameThreshold) {
     sensor_status_info_.sensor_status = 1;
     sensor_status_info_.special_type = 4;
     env_status_->set_hd_map_suppression_reason(
@@ -725,29 +809,20 @@ void MapSourceSwitch::ProcessSpecialJunctionInfo() {
   bool found_entire_special_junction = false;
   const SectionInfo* cur_section = front_section;
   while (true) {
-    if (distance_to_back > 200.0) {
+    if (distance_to_back > kSpecialJunctionSearchDistance) {
       break;
     }
-    bool is_cur_section_are_junction =
-        ((cur_section->link_type &
-          static_cast<uint32_t>(
-              cem::message::env_model::LDLinkTypeMask::LT_ROUNDABOUT)) ||
-         (cur_section->link_type &
-          static_cast<uint32_t>(
-              cem::message::env_model::LDLinkTypeMask::LT_IC)) ||
-         (cur_section->link_type &
-          static_cast<uint32_t>(
-              cem::message::env_model::LDLinkTypeMask::LT_JCT)));
+    const bool is_cur_section_junction = IsJunctionSection(cur_section);
     if (!found_special_junction) {
       if (distance_to_back >= distance_to_next_junction_) {
         break;
       }
-      if (is_cur_section_are_junction) {
+      if (is_cur_section_junction) {
         distance_to_next_junction_ = distance_to_back;
         found_special_junction = true;
       }
     } else {
-      if (!is_cur_section_are_junction) {
+      if (!is_cur_section_junction) {
         distance_to_section_over_first_junction_ = distance_to_back;
         found_entire_special_junction = true;
         break;
@@ -755,18 +830,12 @@ void MapSourceSwitch::ProcessSpecialJunctionInfo() {
     }
 
     distance_to_back += cur_section->length;
-    bool found_successor_section = false;
-    for (auto id : cur_section->successor_section_id_list) {
-      if (fusion_mgr_->GetLdSection(id) == nullptr) {
-        continue;
-      }
-      cur_section = fusion_mgr_->GetLdSection(id);
-      found_successor_section = true;
+    const auto* successor_section = GetFirstValidLinkedSection(
+        cur_section->successor_section_id_list, fusion_mgr_);
+    if (successor_section == nullptr) {
       break;
     }
-    if (!found_successor_section) {
-      break;
-    }
+    cur_section = successor_section;
   }
 
   if (found_special_junction && (!found_entire_special_junction)) {
@@ -776,47 +845,23 @@ void MapSourceSwitch::ProcessSpecialJunctionInfo() {
       distance_to_next_junction_ < 0.0 ? 0.0 : distance_to_next_junction_;
 
   double distance_to_front = routing_map->route.navi_start.s_offset;
-  bool is_junction_continuous =
-      ((front_section->link_type &
-        static_cast<uint32_t>(
-            cem::message::env_model::LDLinkTypeMask::LT_ROUNDABOUT)) ||
-       (front_section->link_type &
-        static_cast<uint32_t>(
-            cem::message::env_model::LDLinkTypeMask::LT_IC)) ||
-       (front_section->link_type &
-        static_cast<uint32_t>(
-            cem::message::env_model::LDLinkTypeMask::LT_JCT)));
+  bool is_junction_continuous = IsJunctionSection(front_section);
   cur_section = front_section;
   while (true) {
     if (distance_to_front >= distance_to_previous_junction_ ||
-        distance_to_front > 100.0) {
+        distance_to_front > kPreviousJunctionSearchDistance) {
       break;
     }
-    bool found_predecessor_section = false;
-    for (auto id : cur_section->predecessor_section_id_list) {
-      if (fusion_mgr_->GetLdSection(id) == nullptr) {
-        continue;
-      }
-      cur_section = fusion_mgr_->GetLdSection(id);
-      found_predecessor_section = true;
+    const auto* predecessor_section = GetFirstValidLinkedSection(
+        cur_section->predecessor_section_id_list, fusion_mgr_);
+    if (predecessor_section == nullptr) {
       break;
     }
-    if (!found_predecessor_section) {
-      break;
-    }
+    cur_section = predecessor_section;
 
-    bool is_cur_section_are_junction =
-        ((cur_section->link_type &
-          static_cast<uint32_t>(
-              cem::message::env_model::LDLinkTypeMask::LT_ROUNDABOUT)) ||
-         (cur_section->link_type &
-          static_cast<uint32_t>(
-              cem::message::env_model::LDLinkTypeMask::LT_IC)) ||
-         (cur_section->link_type &
-          static_cast<uint32_t>(
-              cem::message::env_model::LDLinkTypeMask::LT_JCT)));
+    const bool is_cur_section_junction = IsJunctionSection(cur_section);
 
-    if (is_cur_section_are_junction) {
+    if (is_cur_section_junction) {
       if (is_junction_continuous) {
         distance_to_front += cur_section->length;
       } else {
@@ -833,119 +878,91 @@ void MapSourceSwitch::ProcessSpecialJunctionInfo() {
 }
 
 void MapSourceSwitch::ForceChangeSourceToPerceptionMap() {
+  auto force_use_perception =
+      [this](const EnvStatus::MapSuppressionReason reason) {
+        ForceUsePerceptionMap(route_snapshot_for_perception_map_switch_failure_,
+                              use_perception_, env_status_, reason);
+      };
+
   if (use_perception_) {
     route_snapshot_for_perception_map_switch_failure_.clear();
     return;
   }
+
   auto routing_map = fusion_mgr_->GetLdMapInfo();
   if (routing_map == nullptr) {
-    route_snapshot_for_perception_map_switch_failure_.clear();
-    use_perception_ = true;
-    env_status_->set_hd_map_suppression_reason(
+    force_use_perception(
         EnvStatus::MapSuppressionReason::
             EnvStatus_MapSuppressionReason_NO_HD_MAP_FRAME);
     return;
   }
-  if (env_status_->perception_map_suppression_reason() ==
+
+  const auto suppression_reason =
+      env_status_->perception_map_suppression_reason();
+  if (suppression_reason ==
       EnvStatus::MapSuppressionReason::
           EnvStatus_MapSuppressionReason_UNABLE_TO_MATCH_PERCEPTION_WITH_HD_MAP) {
     if (next_low_precision_start_offset_ <
         LD_MAP_LOW_PRECISION_DISTANCE_DOWNGRADE_LIMIT) {
-      route_snapshot_for_perception_map_switch_failure_.clear();
-      use_perception_ = true;
-      env_status_->set_hd_map_suppression_reason(
+      force_use_perception(
           EnvStatus::MapSuppressionReason::
               EnvStatus_MapSuppressionReason_FORCE_USE_PERCEPTION_MAP_SINCE_LOW_PRECISION_ZONE);
       return;
     }
 
-    auto front_section_id = routing_map->route.navi_start.section_id;
-    if (fusion_mgr_->GetLdSection(front_section_id) == nullptr) {
-      route_snapshot_for_perception_map_switch_failure_.clear();
-      use_perception_ = true;
-      env_status_->set_hd_map_suppression_reason(
+    const auto front_section_id = routing_map->route.navi_start.section_id;
+    const auto* front_section = fusion_mgr_->GetLdSection(front_section_id);
+    if (front_section == nullptr) {
+      force_use_perception(
           EnvStatus::MapSuppressionReason::
               EnvStatus_MapSuppressionReason_NO_NAVIGATION_START_SECTION);
-
       return;
     }
-    auto front_section = fusion_mgr_->GetLdSection(front_section_id);
+
+    const double front_section_remaining_length =
+        front_section->length - routing_map->route.navi_start.s_offset;
 
     if (route_snapshot_for_perception_map_switch_failure_.empty()) {
-      route_snapshot_for_perception_map_switch_failure_.push_back(
-          std::move(std::pair<uint64_t, double>(
-              front_section_id,
-              front_section->length - routing_map->route.navi_start.s_offset)));
-      double total_length =
-          route_snapshot_for_perception_map_switch_failure_.front().second;
-
-      auto cur_section = front_section;
-      while (total_length < 200) {
-        bool found_successor_section = false;
-        for (auto id : cur_section->successor_section_id_list) {
-          if (fusion_mgr_->GetLdSection(id) == nullptr) {
-            continue;
-          }
-          cur_section = fusion_mgr_->GetLdSection(id);
-          found_successor_section = true;
-          break;
-        }
-        if (!found_successor_section) {
-          break;
-        } else {
-          route_snapshot_for_perception_map_switch_failure_.push_back(
-              std::move(std::pair<uint64_t, double>(cur_section->id,
-                                                    cur_section->length)));
-          total_length += cur_section->length;
-        }
-      }
+      BuildSwitchFailureRouteSnapshot(
+          fusion_mgr_, front_section, front_section_remaining_length,
+          route_snapshot_for_perception_map_switch_failure_);
       return;
-    } else {
-      bool is_snapshot_valid = false;
-      double switch_failure_distance =
-          -(front_section->length - routing_map->route.navi_start.s_offset);
-      for (auto& section : route_snapshot_for_perception_map_switch_failure_) {
-        switch_failure_distance += section.second;
-        if (section.first == front_section->id) {
-          is_snapshot_valid = true;
-          break;
-        }
-      }
-      if (!is_snapshot_valid) {
-        route_snapshot_for_perception_map_switch_failure_.clear();
-        use_perception_ = true;
-        env_status_->set_hd_map_suppression_reason(
-            EnvStatus::MapSuppressionReason::
-                EnvStatus_MapSuppressionReason_FORCE_USE_PERCEPTION_MAP_SINCE_HISTORY_ROUTE_INVALID);
-        return;
-      } else {
-        if (switch_failure_distance >
-            LD_MAP_TO_PERCEPTION_FORCE_SWITCH_THRESHOLD) {
-          route_snapshot_for_perception_map_switch_failure_.clear();
-          use_perception_ = true;
-          env_status_->set_hd_map_suppression_reason(
-              EnvStatus::MapSuppressionReason::
-                  EnvStatus_MapSuppressionReason_FORCE_USE_PERCEPTION_MAP_SINCE_NOT_MATCHED_WITH_LONG_DISTANCE);
-          return;
-        }
-      }
     }
-  } else if (env_status_->perception_map_suppression_reason() ==
-             EnvStatus::MapSuppressionReason::
-                 EnvStatus_MapSuppressionReason_EGO_IS_CHANGING_LANE) {
+
+    double switch_failure_distance = 0.0;
+    const bool is_snapshot_valid = ComputeSwitchFailureDistance(
+        route_snapshot_for_perception_map_switch_failure_, front_section->id,
+        front_section_remaining_length, &switch_failure_distance);
+    if (!is_snapshot_valid) {
+      force_use_perception(
+          EnvStatus::MapSuppressionReason::
+              EnvStatus_MapSuppressionReason_FORCE_USE_PERCEPTION_MAP_SINCE_HISTORY_ROUTE_INVALID);
+      return;
+    }
+    if (switch_failure_distance >
+        LD_MAP_TO_PERCEPTION_FORCE_SWITCH_THRESHOLD) {
+      force_use_perception(
+          EnvStatus::MapSuppressionReason::
+              EnvStatus_MapSuppressionReason_FORCE_USE_PERCEPTION_MAP_SINCE_NOT_MATCHED_WITH_LONG_DISTANCE);
+      return;
+    }
+    return;
+  }
+
+  if (suppression_reason ==
+      EnvStatus::MapSuppressionReason::
+          EnvStatus_MapSuppressionReason_EGO_IS_CHANGING_LANE) {
     if (next_low_precision_start_offset_ <
         LD_MAP_LOW_PRECISION_DISTANCE_DOWNGRADE_LIMIT) {
-      route_snapshot_for_perception_map_switch_failure_.clear();
-      use_perception_ = true;
-      env_status_->set_hd_map_suppression_reason(
+      force_use_perception(
           EnvStatus::MapSuppressionReason::
               EnvStatus_MapSuppressionReason_FORCE_USE_PERCEPTION_MAP_SINCE_LOW_PRECISION_ZONE);
-      return;
     }
-  } else {
-    if (is_ego_lane_match_offset_in_range_) {
-      route_snapshot_for_perception_map_switch_failure_.clear();
-    }
+    return;
+  }
+
+  if (is_ego_lane_match_offset_in_range_) {
+    route_snapshot_for_perception_map_switch_failure_.clear();
   }
 }
 
