@@ -22,10 +22,7 @@
 #include <Eigen/Core>
 #include <Eigen/Geometry>
 #include <cyber/common/log.h>
-#include <localmap_construction/traffic_light_common.h>
 #include <localmap_construction/traffic_light_map_topo.h>
-#include <math/math.h>
-#include <message/common/geometry.h>
 #include <message/internal_message.h>
 #include <message/sensor/vision/tsrmobject.h>
 #include <perception_and_ld_map_fusion/data_fusion/geometry_match_info.h>
@@ -91,8 +88,9 @@ void TrafficLightMapping::Process(const RoutingMapPtr &routing_map_input, const 
 
   auto Tbw_t = Tbw;
 
-  std::string cloud_debug_info;
-  cloud_traffic_light_ = cem::fusion::claud_traffic::GetCloudTrafficLights(bev_map, cloud_debug_info, &Tbw_t);
+  std::string cloud_info;
+
+  std::optional<TrafficLights> cloud_traffic_light = cem::fusion::claud_traffic::GetCloudTrafficLights(bev_map, cloud_info);
   CLOUD_TRAFFIC_LOG << "cloud_traffic_light_______________________end______\n\n\n";
 
   {
@@ -168,11 +166,11 @@ void TrafficLightMapping::Process(const RoutingMapPtr &routing_map_input, const 
     NEW_LOG << "------------------------------end-----------\n\n";
   }
 
-  if (cloud_traffic_light_) {
+  if (cloud_traffic_light) {
     info_traffic_lights_ =
-        fmt::format(" cloud_junc_id:{} type:{} ", cloud_traffic_light_->junction_tail_id, cloud_traffic_light_->junction_cloud_type);
-    CLOUD_TRAFFIC_LOG << info_traffic_lights_;
-    traffic_lights_ = ChooseBestTrafficLights(*cloud_traffic_light_, traffic_lights_);
+        fmt::format(" cloud_junc_id:{} type:{} ", cloud_traffic_light->junction_tail_id, cloud_traffic_light->junction_cloud_type);
+    NEW_LOG << info_traffic_lights_;
+    traffic_lights_ = ChooseBestTrafficLights(*cloud_traffic_light, traffic_lights_);
   }
 
   SetAllLightStatus();
@@ -181,15 +179,13 @@ void TrafficLightMapping::Process(const RoutingMapPtr &routing_map_input, const 
 
   auto traffic_sd = traffic_lights_;
   SetTrafficLight(routing_map_input, routing_map_output);
-  // traffic_lights_ = traffic_sd;
+  traffic_lights_ = traffic_sd;
 
   SetSrTrafficLight(routing_map_output);
 
   BindingTrafficLightToBev(bev_map);
 
   CollectAllLightLanes(routing_map_output, bev_map);
-
-  info_traffic_lights_ += " " + cloud_debug_info;
 
   TRAFFIC_REC_LOG << "\n\n ";
 
@@ -322,544 +318,145 @@ void TrafficLightMapping::MatchLightAndJunction(const RoutingMapPtr &routing_map
   }
 }
 
-bool TrafficLightMapping::IsSameColor(const std::vector<TrfObjectInfo> &qual_obj_temp) {
-  if (qual_obj_temp.empty()) {
-    return true;
-  }
-  auto first_color    = qual_obj_temp[0].attributes.traffic_light_color;
-  bool all_same_color = std::all_of(qual_obj_temp.begin(), qual_obj_temp.end(), [first_color](const TrfObjectInfo &rhs) {
-    if (first_color == message::sensor::TLC_RED || first_color == message::sensor::TLC_RED_FLASHING) {
-      return rhs.attributes.traffic_light_color == message::sensor::TLC_RED ||
-             rhs.attributes.traffic_light_color == message::sensor::TLC_RED_FLASHING;
+void TrafficLightMapping::GetTrafficLightsLd(const std::vector<TrfObjectInfo> &traffic_lights_vec) {
+  auto IsSameColor = [](const std::vector<TrfObjectInfo> &qual_obj_temp) {
+    if (qual_obj_temp.empty()) {
+      return true;
     }
-    if (first_color == message::sensor::TLC_YELLOW || first_color == message::sensor::TLC_YELLOW_FLASHING) {
-      return rhs.attributes.traffic_light_color == message::sensor::TLC_YELLOW ||
-             rhs.attributes.traffic_light_color == message::sensor::TLC_YELLOW_FLASHING;
+    auto first_color    = qual_obj_temp[0].attributes.traffic_light_color;
+    bool all_same_color = std::all_of(qual_obj_temp.begin(), qual_obj_temp.end(), [first_color](const TrfObjectInfo &rhs) {
+      if (first_color == message::sensor::TLC_RED || first_color == message::sensor::TLC_RED_FLASHING) {
+        return rhs.attributes.traffic_light_color == message::sensor::TLC_RED ||
+               rhs.attributes.traffic_light_color == message::sensor::TLC_RED_FLASHING;
+      }
+      if (first_color == message::sensor::TLC_YELLOW || first_color == message::sensor::TLC_YELLOW_FLASHING) {
+        return rhs.attributes.traffic_light_color == message::sensor::TLC_YELLOW ||
+               rhs.attributes.traffic_light_color == message::sensor::TLC_YELLOW_FLASHING;
+      }
+      if (first_color == message::sensor::TLC_GREEN || first_color == message::sensor::TLC_GREEN_FLASHING) {
+        return rhs.attributes.traffic_light_color == message::sensor::TLC_GREEN ||
+               rhs.attributes.traffic_light_color == message::sensor::TLC_GREEN_FLASHING;
+      }
+      return false;
+    });
+    return all_same_color;
+  };
+  auto GetTrafficArrow = [&](const std::vector<TrfObjectInfo> &traffic_lights_vec, const std::vector<TrafficLightShapeType> &shapes,
+                             const TrafficLight &traffic_light_prev, TrafficLight &traffic_light_tmp) {
+    std::vector<TrfObjectInfo> quality_objs;
+    TRAFFIC_LOG << fmt::format("turn_light:{} shape:{}", magic_enum::enum_name(traffic_light_tmp.turn_type),
+                               magic_enum::enum_name(shapes.front()));
+    if (traffic_light_tmp.is_valid) {
+      return;
     }
-    if (first_color == message::sensor::TLC_GREEN || first_color == message::sensor::TLC_GREEN_FLASHING) {
-      return rhs.attributes.traffic_light_color == message::sensor::TLC_GREEN ||
-             rhs.attributes.traffic_light_color == message::sensor::TLC_GREEN_FLASHING;
-    }
-    return false;
-  });
-  return all_same_color;
-};
-const auto GetMinLaterval = [](const TransformParams &trans_para, const std::vector<TrfObjectInfo> &quality_objs) {
-  std::vector<std::pair<const TrfObjectInfo *, double>> quality_obj_dis;
-  for (const auto &obj : quality_objs) {
-    Point3DD obj_pos{obj.position.x, obj.position.y, 0.0};
-    auto     obj_new_pos = TransformCoordinate(obj_pos, trans_para);
-    quality_obj_dis.emplace_back(&obj, std::fabs(obj_new_pos.y + trans_para.width / 2.0));
-  }
-  std::sort(quality_obj_dis.begin(), quality_obj_dis.end(), [](const auto &lhs, const auto &rhs) { return lhs.second < rhs.second; });
-  return quality_obj_dis;
-};
-
-void TrafficLightMapping::GetTrafficArrow(const std::vector<TrfObjectInfo>         &traffic_lights_vec,
-                                          const std::vector<TrafficLightShapeType> &shapes, const TrafficLight &traffic_light_prev,
-                                          TrafficLight &traffic_light_tmp) {
-  std::vector<TrfObjectInfo> quality_objs;
-  if (traffic_light_tmp.is_valid) {
-    return;
-  }
-  std::vector<uint64_t> obj_ids;
-  for (const auto &shape : shapes) {
-    for (const auto &obj : traffic_lights_vec) {
-      if (obj.attributes.traffic_light_shape == shape) {
-        quality_objs.push_back(obj);
-        obj_ids.push_back(obj.id);
+    std::vector<uint64_t> obj_ids;
+    for (const auto &shape : shapes) {
+      for (const auto &obj : traffic_lights_vec) {
+        if (obj.attributes.traffic_light_shape == shape) {
+          quality_objs.push_back(obj);
+          obj_ids.push_back(obj.id);
+        }
       }
     }
-  }
-  std::size_t qual_size = quality_objs.size();
-  if (qual_size == 0) {
-    return;
-  }
-  LD_TRAFFIC_LOG << fmt::format("turn_light:{} shape:{} obj_ids:{}", magic_enum::enum_name(traffic_light_tmp.turn_type),
-                                magic_enum::enum_name(shapes.front()), obj_ids);
-  if (qual_size == 1) {
-    LD_TRAFFIC_LOG << "only_one_obj:" << quality_objs[0].id;
-    SetLightT(quality_objs.front(), traffic_light_tmp);
-    return;
-  }
-  std::sort(quality_objs.begin(), quality_objs.end(),
-            [](const TrfObjectInfo &lhs, const TrfObjectInfo &rhs) { return lhs.direction_conf > rhs.direction_conf; });
-  if (quality_objs[0].direction_conf - quality_objs[1].direction_conf > 0.2) {
-    SetLightT(quality_objs.front(), traffic_light_tmp);
-    return;
-  }
-  LD_TRAFFIC_LOG << fmt::format("max_direction_id:{}  val:{}", quality_objs[0].id, quality_objs[0].direction_conf);
-  if (quality_objs[0].direction_conf > 1 - k_epsilon) {
-    quality_objs.erase(std::remove_if(quality_objs.begin(), quality_objs.end(),
-                                      [](const TrfObjectInfo &rhs) { return rhs.direction_conf < 1 - k_epsilon; }),
-                       quality_objs.end());
-  }
-  SetLightT(quality_objs.front(), traffic_light_tmp);
-  if (quality_objs.size() == 1) {
-    LD_TRAFFIC_LOG << "set_default_id:" << quality_objs.front().id << " same_color size:" << quality_objs.size();
-    return;
-  }
-  LD_TRAFFIC_LOG << "set_default_id:" << quality_objs.front().id;
-
-  std::sort(quality_objs.begin(), quality_objs.end(),
-            [](const TrfObjectInfo &lhs, const TrfObjectInfo &rhs) { return lhs.track_age > rhs.track_age; });
-  auto     qual_obj_tmp_02 = quality_objs;
-  uint64_t max_track_age   = quality_objs.front().track_age;
-  qual_obj_tmp_02.erase(
-      std::remove_if(qual_obj_tmp_02.begin(), qual_obj_tmp_02.end(),
-                     [max_track_age](const TrfObjectInfo &rhs) { return max_track_age > rhs.track_age + 60 && rhs.track_age < 40; }),
-      qual_obj_tmp_02.end());
-  if (qual_obj_tmp_02.size() == 1 || (!qual_obj_tmp_02.empty() && IsSameColor(qual_obj_tmp_02))) {
-    for (const auto &obj : qual_obj_tmp_02) {
-      LD_TRAFFIC_LOG << "chose_age_id:" << obj.id << " track_age:" << obj.track_age;
-    }
-    if (junction_orin_vertical_) {
-      auto val = GetMinLaterval(*junction_orin_vertical_, qual_obj_tmp_02);
-      LD_TRAFFIC_LOG << "choose_obj_based_on_vertical_lateral.";
-      SetLightT(*val.front().first, traffic_light_tmp);
+    LD_TRAFFIC_LOG << fmt::format("obj_ids:{}", obj_ids);
+    std::size_t qual_size = quality_objs.size();
+    if (qual_size == 0) {
       return;
     }
-    LD_TRAFFIC_LOG << "choose_obj_based_on_track_age. or same_color.  quality_objs_size:" << quality_objs.size()
-                   << "  qual_tmp_size:" << qual_obj_tmp_02.size();
-    SetLightT(quality_objs.front(), traffic_light_tmp);
-    return;
-  }
-
-  std::vector<std::pair<const TrfObjectInfo *, uint64_t>> obj_map_id;
-  for (const auto &obj : quality_objs) {
-    obj_map_id.emplace_back(&obj, GetHisTimes(traffic_light_tmp.turn_type, obj.id));
-  }
-  std::sort(obj_map_id.begin(), obj_map_id.end(), [](const auto &lhs, const auto &rhs) { return lhs.second > rhs.second; });
-  for (const auto &[obj, times] : obj_map_id) {
-    LD_TRAFFIC_LOG << fmt::format("obj_id:{}  time:{}", obj->id, times);
-  }
-  if (obj_map_id[0].second > 2 && obj_map_id[0].second > obj_map_id[1].second) {
-    LD_TRAFFIC_LOG << "choose_obj_base_on_history_times.";
-    SetLightT(*obj_map_id[0].first, traffic_light_tmp);
-    return;
-  }
-
-  auto qual_bak = quality_objs;
-  if (traffic_light_prev.traffic_obj_info) {
-    qual_bak.erase(std::remove_if(qual_bak.begin(), qual_bak.end(),
-                                  [&](const TrfObjectInfo &rhs) {
-                                    double dx = traffic_light_prev.traffic_obj_info->position.x - rhs.position.x;
-                                    double dy = traffic_light_prev.traffic_obj_info->position.y - rhs.position.y;
-                                    return std::sqrt(dx * dx + dy * dy) > 12.0;
-                                  }),
-                   qual_bak.end());
-    if (qual_bak.size() == 1 || (!qual_bak.empty() && IsSameColor(qual_bak))) {
-      LD_TRAFFIC_LOG << "choose_obj_base_on_prev_id_pos. or_same_color";
-      SetLightT(qual_bak.front(), traffic_light_tmp);
+    if (qual_size == 1) {
+      SetLightT(quality_objs.front(), traffic_light_tmp);
       return;
     }
-  }
+    if (qual_size > 1) {
+      std::sort(quality_objs.begin(), quality_objs.end(),
+                [](const TrfObjectInfo &lhs, const TrfObjectInfo &rhs) { return lhs.direction_conf > rhs.direction_conf; });
+      LD_TRAFFIC_LOG << quality_objs[0].direction_conf;
+      if (quality_objs[0].direction_conf > 1 - k_epsilon) {
+        auto qual_obj_temp = quality_objs;
+        qual_obj_temp.erase(std::remove_if(qual_obj_temp.begin(), qual_obj_temp.end(),
+                                           [](const TrfObjectInfo &rhs) { return rhs.direction_conf < 1 - k_epsilon; }),
+                            qual_obj_temp.end());
+        LD_TRAFFIC_LOG << "";
+        SetLightT(quality_objs.front(), traffic_light_tmp);
 
-  std::sort(quality_objs.begin(), quality_objs.end(),
-            [](const TrfObjectInfo &lhs, const TrfObjectInfo &rhs) { return lhs.shape_conf > rhs.shape_conf; });
-  if (quality_objs[0].shape_conf > quality_objs[1].shape_conf + 0.15) {
-    LD_TRAFFIC_LOG << "choose_obj_based_on_shape_conf.";
-    SetLightT(quality_objs.front(), traffic_light_tmp);
-    return;
-  }
-  if (junction_orin_vertical_) {
-    auto val = GetMinLaterval(*junction_orin_vertical_, quality_objs);
-    LD_TRAFFIC_LOG << "choose_obj_based_on_vertical_lateral.";
-    SetLightT(*val.front().first, traffic_light_tmp);
-    return;
-  }
-  if (junction_orin_connect_) {
-    LD_TRAFFIC_LOG << "choose_obj_based_on_connect_lateral.";
-    auto val = GetMinLaterval(*junction_orin_connect_, quality_objs);
-    SetLightT(*val.front().first, traffic_light_tmp);
-    return;
-  }
-  if (section_orin_vertical_) {
-    LD_TRAFFIC_LOG << "choose_obj_based_on_vertical_lateral.";
-    auto val = GetMinLaterval(*section_orin_vertical_, quality_objs);
-    SetLightT(*val.front().first, traffic_light_tmp);
-    return;
-  }
-  std::sort(quality_objs.begin(), quality_objs.end(),
-            [](const TrfObjectInfo &lhs, const TrfObjectInfo &rhs) { return std::fabs(lhs.position.y) < std::fabs(rhs.position.y); });
-  LD_TRAFFIC_LOG << "choose_obj_based_on_lateral.";
-  SetLightT(quality_objs.front(), traffic_light_tmp);
-  // return;
+        if (!IsSameColor(qual_obj_temp)) {
+          LD_TRAFFIC_LOG << "";
+          if (qual_obj_temp.size() > 1) {
+            std::sort(qual_obj_temp.begin(), qual_obj_temp.end(),
+                      [](const TrfObjectInfo &lhs, const TrfObjectInfo &rhs) { return lhs.track_age > rhs.track_age; });
+            auto     qual_obj_tmp_02 = qual_obj_temp;
+            uint64_t max_track_age   = qual_obj_temp.front().track_age;
+            qual_obj_tmp_02.erase(std::remove_if(qual_obj_tmp_02.begin(), qual_obj_tmp_02.end(),
+                                                 [max_track_age](const TrfObjectInfo &rhs) {
+                                                   return max_track_age - 50 > rhs.track_age && rhs.track_age < 400;
+                                                 }),
+                                  qual_obj_tmp_02.end());
+            if (qual_obj_tmp_02.size() == 1 || (!qual_obj_tmp_02.empty() && IsSameColor(qual_obj_tmp_02))) {
+              for (const auto &obj : qual_obj_tmp_02) {
+                LD_TRAFFIC_LOG << "chose_age_id:" << obj.id << " track_age:" << obj.track_age;
+              }
+              SetLightT(qual_obj_temp.front(), traffic_light_tmp);
+              return;
+            }
+            if (traffic_light_prev.traffic_obj_info) {
+              qual_obj_temp.erase(std::remove_if(qual_obj_temp.begin(), qual_obj_temp.end(),
+                                                 [&](const TrfObjectInfo &rhs) {
+                                                   double dx = traffic_light_prev.traffic_obj_info->position.x - rhs.position.x;
+                                                   double dy = traffic_light_prev.traffic_obj_info->position.y - rhs.position.y;
+                                                   return std::sqrt(dx * dx + dy * dy) > 12.0;
+                                                 }),
+                                  qual_obj_temp.end());
+              LD_TRAFFIC_LOG << "qual_size:" << qual_obj_temp.size();
+              if (qual_obj_temp.size() == 1) {
+                LD_TRAFFIC_LOG << "";
+                SetLightT(qual_obj_temp.front(), traffic_light_tmp);
+                return;
+              }
+              if (!qual_obj_temp.empty() && IsSameColor(qual_obj_temp)) {
+                LD_TRAFFIC_LOG << "";
+                SetLightT(qual_obj_temp.front(), traffic_light_tmp);
+                return;
+              }
+            }
+          }
 
-  // traffic_light_tmp.color          = cem::message::sensor::TrafficLightColorType::TLC_BLURRING_MODE;
-  // traffic_light_tmp.traffic_reason = byd::msg::orin::routing_map::LaneInfo::NEW_BLURRING_COLOR;
-};
-
-void TrafficLightMapping::GetTrafficLightsLd(const std::optional<byd::common::math::Polygon2d> &junction_polygon,
-                                             const std::vector<TrfObjectInfo>                  &traffic_lights_vec) {
+          traffic_light_tmp.color          = cem::message::sensor::TrafficLightColorType::TLC_BLURRING_MODE;
+          traffic_light_tmp.traffic_reason = byd::msg::orin::routing_map::LaneInfo::NEW_BLURRING_COLOR;
+        }
+        return;
+      }
+      if (quality_objs[0].direction_conf - quality_objs[1].direction_conf > 0.2) {
+        SetLightT(quality_objs.front(), traffic_light_tmp);
+        return;
+      }
+      std::sort(quality_objs.begin(), quality_objs.end(),
+                [](const TrfObjectInfo &lhs, const TrfObjectInfo &rhs) { return lhs.track_age > rhs.track_age; });
+      if (quality_objs[0].track_age - quality_objs[1].track_age > 40 && quality_objs[1].track_age < 400) {
+        SetLightT(quality_objs.front(), traffic_light_tmp);
+        return;
+      }
+      std::sort(quality_objs.begin(), quality_objs.end(), [](const TrfObjectInfo &lhs, const TrfObjectInfo &rhs) {
+        return std::hypot(lhs.position.x, lhs.position.y) < std::hypot(rhs.position.x, rhs.position.y);
+      });
+      SetLightT(quality_objs.front(), traffic_light_tmp);
+      return;
+    }
+  };
   GetTrafficArrow(traffic_lights_vec, uturn_shapes_, traffic_lights_prev_ld_.u_turn, traffic_lights_ld_.u_turn);
   GetTrafficArrow(traffic_lights_vec, left_shapes_, traffic_lights_prev_ld_.left, traffic_lights_ld_.left);
   GetTrafficArrow(traffic_lights_vec, straight_shapes_, traffic_lights_prev_ld_.straight, traffic_lights_ld_.straight);
   GetTrafficArrow(traffic_lights_vec, right_shapes_, traffic_lights_prev_ld_.right, traffic_lights_ld_.right);
-  GetTrafficArrow(traffic_lights_vec, {message::sensor::TrafficLightShapeType::TLS_LEFT_ARROW}, traffic_lights_prev_ld_.u_turn,
-                  traffic_lights_ld_.u_turn);
   GetTrafficArrow(traffic_lights_vec, {message::sensor::TrafficLightShapeType::TLS_CIRCULAR}, traffic_lights_prev_ld_.u_turn,
                   traffic_lights_ld_.u_turn);
   GetTrafficArrow(traffic_lights_vec, {message::sensor::TrafficLightShapeType::TLS_CIRCULAR}, traffic_lights_prev_ld_.left,
                   traffic_lights_ld_.left);
   GetTrafficArrow(traffic_lights_vec, {message::sensor::TrafficLightShapeType::TLS_CIRCULAR}, traffic_lights_prev_ld_.straight,
                   traffic_lights_ld_.straight);
-}
-
-std::optional<LaneInfo> GetEdgeLane(const std::vector<LaneInfo> &lanes, bool is_left, const std::vector<uint64_t> &lane_ids_tmp) {
-  if (lane_ids_tmp.empty()) {
-    return std::nullopt;
-  }
-  std::vector<LaneInfo> edges_lanes;
-  for (const auto &lane_id : lane_ids_tmp) {
-    auto it_lane = std::find_if(lanes.begin(), lanes.end(), [lane_id, is_left](const LaneInfo &rhs) {
-      return rhs.id == lane_id && ((is_left && rhs.left_lane_id == 0) || (!is_left && rhs.right_lane_id == 0));
-    });
-    if (it_lane == lanes.end()) {
-      continue;
-    }
-    edges_lanes.push_back(*it_lane);
-  }
-  if (edges_lanes.empty()) {
-    return std::nullopt;
-  }
-  if (edges_lanes.size() == 1) {
-    return edges_lanes.front();
-  }
-  auto it_lane = std::find_if(edges_lanes.begin(), edges_lanes.end(), [&lane_ids_tmp, is_left](const LaneInfo &rhs) {
-    return (is_left && lane_ids_tmp.front() == rhs.id) || (!is_left && lane_ids_tmp.back() == rhs.id);
-  });
-  if (it_lane != edges_lanes.end()) {
-    return *it_lane;
-  }
-  return std::nullopt;
-};
-
-void TrafficLightMapping::GetPolygonFromJunction(const RoutingMapPtr &routing_map, uint64_t junction_id,
-                                                 std::vector<uint64_t> *const prev_lanes_ptr) {
-  if (routing_map == nullptr) {
-    return;
-  }
-  int target_junction_idx = -1;
-
-  const auto &lanes          = routing_map->lanes;
-  const auto &route_sections = routing_map->route.sections;
-  if (route_sections.empty()) {
-    return;
-  }
-  bool junction_no_turn = true;
-  for (std::size_t idx = 0; idx < route_sections.size(); idx++) {
-    for (const auto lane_id : routing_map->route.sections[idx].lane_ids) {
-      auto it_lane = std::find_if(lanes.begin(), lanes.end(),
-                                  [&](const LaneInfo &rhs) { return rhs.id == lane_id && rhs.junction_id == junction_id; });
-      if (it_lane != lanes.end()) {
-        target_junction_idx = static_cast<int>(idx);
-        junction_no_turn    = it_lane->turn_type == TurnType::NO_TURN;
-      }
-    }
-    if (target_junction_idx != -1 && !route_sections[target_junction_idx].lane_ids.empty()) {
-      break;
-    }
-  }
-  if (target_junction_idx == -1) {
-    LD_TRAFFIC_LOG << "target_junction_idx:" << target_junction_idx;
-    return;
-  }
-  LD_TRAFFIC_LOG << fmt::format("junction_idx:{}  is_no_turn:{:d}", target_junction_idx, junction_no_turn);
-
-  int                   prev_junction_idx = -1;
-  int                   next_junction_idx = -1;
-  std::vector<uint64_t> prev_lanes;
-  std::vector<uint64_t> next_lanes;
-  std::vector<uint64_t> junction_lanes;
-
-  if (target_junction_idx > 0) {
-    prev_junction_idx = target_junction_idx - 1;
-  }
-  if (junction_no_turn) {
-    for (int idx_t = target_junction_idx + 1; idx_t < static_cast<int>(route_sections.size()); idx_t++) {
-      for (uint64_t id_t : route_sections[idx_t].lane_ids) {
-        auto it_lane =
-            std::find_if(lanes.begin(), lanes.end(), [id_t](const LaneInfo &rhs) { return id_t == rhs.id && rhs.junction_id == 0; });
-        if (it_lane != lanes.begin()) {
-          next_junction_idx = idx_t;
-          break;
-        }
-      }
-      if (next_junction_idx != -1) {
-        break;
-      }
-    }
-  } else if (prev_junction_idx != -1) {
-    for (uint64_t succ_section_id : route_sections[prev_junction_idx].successor_section_id_list) {
-      std::for_each(lanes.begin(), lanes.end(), [&](const LaneInfo &rhs) {
-        if (rhs.section_id == succ_section_id && rhs.junction_id == junction_id && rhs.turn_type == TurnType::NO_TURN) {
-          junction_lanes.emplace_back(rhs.id);
-        }
-      });
-    }
-  }
-
-  std::vector<Vec2d> points;
-
-  if (prev_junction_idx != -1) {
-    prev_lanes = route_sections[prev_junction_idx].lane_ids;
-  }
-  if (next_junction_idx != -1) {
-    next_lanes = route_sections[next_junction_idx].lane_ids;
-  }
-  if (junction_no_turn) {
-    junction_lanes = route_sections[target_junction_idx].lane_ids;
-  }
-  if (prev_lanes_ptr != nullptr) {
-    *prev_lanes_ptr = prev_lanes;
-  }
-
-  auto prev_left_lane      = GetEdgeLane(lanes, true, prev_lanes);
-  auto prev_right_lane     = GetEdgeLane(lanes, false, prev_lanes);
-  auto junction_left_lane  = GetEdgeLane(lanes, true, junction_lanes);
-  auto junction_right_lane = GetEdgeLane(lanes, false, junction_lanes);
-  auto next_left_lane      = GetEdgeLane(lanes, true, next_lanes);
-  auto next_right_lane     = GetEdgeLane(lanes, false, next_lanes);
-  LD_TRAFFIC_LOG << fmt::format("prev_lane:{}  junction_lane:{} next_lane:{}", prev_lanes.size(), junction_lanes.size(), next_lanes.size());
-  if (!junction_left_lane || !junction_right_lane || junction_left_lane->points.empty() || junction_right_lane->points.empty()) {
-    if (prev_left_lane && prev_right_lane && !prev_left_lane->points.empty() && !prev_right_lane->points.empty()) {
-      Vec2d start_left_point{prev_left_lane->points.front().x, prev_left_lane->points.front().y};
-      Vec2d start_right_point{prev_right_lane->points.front().x, prev_right_lane->points.front().y};
-      Vec2d back_left_point{prev_left_lane->points.back().x, prev_left_lane->points.back().y};
-      Vec2d back_right_point{prev_right_lane->points.back().x, prev_right_lane->points.back().y};
-
-      LineSegment2d left_seg{start_left_point, back_left_point};
-      LineSegment2d right_seg{start_right_point, back_right_point};
-      // LD_TRAFFIC_LOG << fmt::format("left_lane:{} right_lane:{} back_point{:.2f},{:.2f};  {:.2f},{:.2f}", prev_left_lane->id,
-      //                               prev_right_lane->id, back_left_point.x(), back_left_point.y(), back_right_point.x(),
-      //                               back_right_point.y());
-
-      junction_orin_vertical_         = TransformParams{};
-      junction_orin_vertical_->tx     = back_left_point.x();
-      junction_orin_vertical_->ty     = back_left_point.y();
-      junction_orin_vertical_->width  = back_left_point.DistanceTo(back_right_point);
-      junction_orin_vertical_->length = 50.0;
-      junction_orin_vertical_->theta  = (left_seg.heading() + right_seg.heading()) / 2.0;
-      LD_TRAFFIC_LOG << fmt::format("junction_vertical tx:{:.2f}  ty:{:.2f}  heading:{:.2f}  width:{:.2f}  length:{:.2f}",
-                                    junction_orin_vertical_->tx, junction_orin_vertical_->ty, junction_orin_vertical_->theta,
-                                    junction_orin_vertical_->width, junction_orin_vertical_->length);
-    } else {
-      LD_TRAFFIC_LOG << fmt::format("prev_left:{:d}  prev_right:{:d}", prev_left_lane.has_value(), prev_right_lane.has_value());
-    }
-    return;
-  }
-
-  Vec2d junction_start_left{junction_left_lane->points.front().x, junction_left_lane->points.front().y};
-  Vec2d junction_start_right{junction_right_lane->points.front().x, junction_right_lane->points.front().y};
-
-  std::optional<double> prev_heading{std::nullopt};
-  if (prev_left_lane && prev_right_lane && !prev_left_lane->points.empty() && !prev_right_lane->points.empty()) {
-    Vec2d start_left_point{prev_left_lane->points.front().x, prev_left_lane->points.front().y};
-    Vec2d start_right_point{prev_right_lane->points.front().x, prev_right_lane->points.front().y};
-    Vec2d back_left_point{prev_left_lane->points.back().x, prev_left_lane->points.back().y};
-    Vec2d back_right_point{prev_right_lane->points.back().x, prev_right_lane->points.back().y};
-
-    LineSegment2d left_seg{start_left_point, back_left_point};
-    LineSegment2d right_seg{start_right_point, back_right_point};
-    prev_heading = (left_seg.heading() + right_seg.heading()) / 2.0;
-
-    if (back_left_point.DistanceTo(back_right_point) > junction_start_left.DistanceTo(junction_start_right)) {
-      points.emplace_back(back_left_point);
-      points.emplace_back(back_right_point);
-    } else {
-      points.emplace_back(junction_start_left);
-      points.emplace_back(junction_start_right);
-    }
-  } else {
-    points.emplace_back(junction_start_left);
-    points.emplace_back(junction_start_right);
-  }
-
-  std::vector<LaneInfo> left_next_lanes;
-  std::vector<LaneInfo> right_next_lanes;
-  for (uint64_t id_t : junction_left_lane->next_lane_ids) {
-    auto it_lane = std::find_if(lanes.begin(), lanes.end(),
-                                [id_t](const LaneInfo &rhs) { return rhs.junction_id != 0 && rhs.id == id_t && !rhs.points.empty(); });
-    if (it_lane != lanes.end()) {
-      left_next_lanes.push_back(*it_lane);
-    }
-  }
-  if (left_next_lanes.size() == 1) {
-    junction_left_lane = left_next_lanes.front();
-  } else if (left_next_lanes.size() > 1) {
-    TransformParams tra_base;
-    tra_base.tx = junction_left_lane->points.back().x;
-    tra_base.ty = junction_left_lane->points.back().y;
-    LineSegment2d seg{Vec2d(junction_left_lane->points.front().x, junction_left_lane->points.front().y),
-                      Vec2d(junction_left_lane->points.back().x, junction_left_lane->points.back().y)};
-    tra_base.theta = seg.heading();
-    double max_y   = std::numeric_limits<double>::lowest();
-    int    max_idx = -1;
-    for (std::size_t idx_t = 0; idx_t < left_next_lanes.size(); idx_t++) {
-      const auto &lane = left_next_lanes[idx_t];
-      Point3DD    end_point{lane.points.back().x, lane.points.back().y, 0.0};
-      auto        new_point = TransformCoordinate(end_point, tra_base);
-      if (new_point.y > max_y) {
-        max_y   = new_point.y;
-        max_idx = static_cast<int>(idx_t);
-      }
-    }
-    if (max_idx != -1) {
-      junction_left_lane = left_next_lanes[max_idx];
-    }
-  }
-  for (uint64_t id_t : junction_right_lane->next_lane_ids) {
-    auto it_lane = std::find_if(lanes.begin(), lanes.end(),
-                                [id_t](const LaneInfo &rhs) { return rhs.junction_id != 0 && rhs.id == id_t && !rhs.points.empty(); });
-    if (it_lane != lanes.end()) {
-      right_next_lanes.push_back(*it_lane);
-    }
-  }
-  if (right_next_lanes.size() == 1) {
-    junction_right_lane = right_next_lanes.front();
-  } else if (right_next_lanes.size() > 1) {
-    TransformParams tra_base;
-    tra_base.tx = junction_right_lane->points.back().x;
-    tra_base.ty = junction_right_lane->points.back().y;
-    LineSegment2d seg{Vec2d(junction_right_lane->points.front().x, junction_right_lane->points.front().y),
-                      Vec2d(junction_right_lane->points.back().x, junction_right_lane->points.back().y)};
-    tra_base.theta = seg.heading();
-    double min_y   = std::numeric_limits<double>::infinity();
-    int    min_idx = -1;
-    for (std::size_t idx_t = 0; idx_t < right_next_lanes.size(); idx_t++) {
-      const auto &lane = right_next_lanes[idx_t];
-      Point3DD    end_point{lane.points.back().x, lane.points.back().y, 0.0};
-      auto        new_point = TransformCoordinate(end_point, tra_base);
-      if (new_point.y < min_y) {
-        min_y   = new_point.y;
-        min_idx = static_cast<int>(idx_t);
-      }
-    }
-    if (min_idx != -1) {
-      junction_right_lane = right_next_lanes[min_idx];
-    }
-  }
-  LD_TRAFFIC_LOG << fmt::format("junction_left_lane:{} junction_right_lane:{}", junction_left_lane->id, junction_right_lane->id);
-  Vec2d junction_end_left{junction_left_lane->points.back().x, junction_left_lane->points.back().y};
-  Vec2d junction_end_right{junction_right_lane->points.back().x, junction_right_lane->points.back().y};
-
-  if (junction_no_turn || next_lanes.empty()) {
-    points.emplace_back(junction_end_right);
-    points.emplace_back(junction_end_left);
-  } else if (next_left_lane && next_right_lane && !next_left_lane->points.empty() && !next_right_lane->points.empty()) {
-    Vec2d left_point{next_left_lane->points.front().x, next_left_lane->points.front().y};
-    Vec2d right_point{next_right_lane->points.front().x, next_right_lane->points.front().y};
-    if (left_point.DistanceTo(right_point) > junction_start_left.DistanceTo(junction_start_right)) {
-      points.emplace_back(right_point);
-      points.emplace_back(left_point);
-    } else {
-      points.emplace_back(junction_end_right);
-      points.emplace_back(junction_end_left);
-    }
-  } else {
-    points.emplace_back(junction_end_right);
-    points.emplace_back(junction_end_left);
-  }
-  junction_orin_connect_         = TransformParams{};
-  junction_orin_connect_->tx     = points.front().x();
-  junction_orin_connect_->ty     = points.front().y();
-  junction_orin_connect_->width  = points[0].DistanceTo(points[1]);
-  junction_orin_connect_->length = points[0].DistanceTo(points[3]);
-  LineSegment2d line_seg{points[0], points[3]};
-  junction_orin_connect_->theta = line_seg.heading();
-
-  junction_orin_vertical_         = TransformParams{};
-  junction_orin_vertical_->tx     = points.front().x();
-  junction_orin_vertical_->ty     = points.front().y();
-  junction_orin_vertical_->width  = points[0].DistanceTo(points[1]);
-  junction_orin_vertical_->length = points[0].DistanceTo(points[3]);
-  if (prev_heading) {
-    junction_orin_vertical_->theta = *prev_heading;
-  } else {
-    junction_orin_vertical_->theta = junction_orin_connect_->theta;
-  }
-  LD_TRAFFIC_LOG << fmt::format("junction_vertical tx:{:.2f}  ty:{:.2f}  heading:{:.2f}  width:{:.2f}  length:{:.2f}",
-                                junction_orin_vertical_->tx, junction_orin_vertical_->ty, junction_orin_vertical_->theta,
-                                junction_orin_vertical_->width, junction_orin_vertical_->length);
-  LD_TRAFFIC_LOG << fmt::format("junction_connect tx:{:.2f}  ty:{:.2f}  heading:{:.2f}  width:{:.2f}  length:{:.2f}",
-                                junction_orin_connect_->tx, junction_orin_connect_->ty, junction_orin_connect_->theta,
-                                junction_orin_connect_->width, junction_orin_connect_->length);
-  for (const auto &point : points) {
-    LD_TRAFFIC_LOG << fmt::format("point_x:{:.2f} point_y:{:.2f}", point.x(), point.y());
-  }
-}
-
-void TrafficLightMapping::GetPolygonFromSection(const RoutingMapPtr &routing_map, uint64_t section_id,
-                                                std::vector<uint64_t> *const prev_lanes_ptr) {
-  std::optional<byd::common::math::Polygon2d> section_polygon{std::nullopt};
-  if (routing_map == nullptr) {
-    return;
-  }
-  const auto &lanes              = routing_map->lanes;
-  const auto &route_sections     = routing_map->route.sections;
-  int         target_section_idx = -1;
-  for (std::size_t idx = 0; idx < routing_map->route.sections.size(); idx++) {
-    if (routing_map->route.sections[idx].id == section_id) {
-      target_section_idx = static_cast<int>(idx);
-      break;
-    }
-  }
-
-  if (target_section_idx == -1) {
-    LD_TRAFFIC_LOG << "target_section_idx:" << target_section_idx;
-    return;
-  }
-  if (target_section_idx > 0 && (prev_lanes_ptr != nullptr)) {
-    *prev_lanes_ptr = routing_map->route.sections[target_section_idx - 1].lane_ids;
-  }
-
-  std::vector<uint64_t> junction_lanes = route_sections[target_section_idx].lane_ids;
-
-  auto section_left_lane  = GetEdgeLane(lanes, true, junction_lanes);
-  auto section_right_lane = GetEdgeLane(lanes, false, junction_lanes);
-  if (!section_left_lane || !section_right_lane) {
-    return;
-  }
-  Vec2d section_start_left{section_left_lane->points.front().x, section_left_lane->points.front().y};
-  Vec2d section_start_right{section_right_lane->points.front().x, section_right_lane->points.front().y};
-  Vec2d section_end_left{section_left_lane->points.back().x, section_left_lane->points.back().y};
-  Vec2d section_end_right{section_right_lane->points.back().x, section_right_lane->points.back().y};
-  section_orin_vertical_     = TransformParams{};
-  section_orin_vertical_->tx = section_start_left.x();
-  section_orin_vertical_->ty = section_start_left.y();
-  LineSegment2d seg_2d{section_end_left, section_end_left};
-  section_orin_vertical_->theta  = seg_2d.heading();
-  section_orin_vertical_->width  = section_start_left.DistanceTo(section_start_right);
-  section_orin_vertical_->length = section_start_left.DistanceTo(section_end_left);
-  LD_TRAFFIC_LOG << fmt::format("section_vertical tx:{:.2f}  ty:{:.2f}  heading:{:.2f}  width:{:.2f}  length:{:.2f}",
-                                section_orin_vertical_->tx, section_orin_vertical_->ty, section_orin_vertical_->theta,
-                                section_orin_vertical_->width, section_orin_vertical_->length);
-}
-
-bool TrafficLightMapping::IsUturnSection(const RoutingMapPtr &routing_map, const std::vector<uint64_t> &section_lanes_id,
-                                         const std::set<uint64_t> &light_ids) {
-  const auto &lanes         = routing_map->lanes;
-  bool        is_only_uturn = true;
-  for (const auto id : light_ids) {
-    auto it_light = std::find_if(perception_traffic_lights_.begin(), perception_traffic_lights_.end(),
-                                 [id](const TrfObjectInfo &rhs) { return id == rhs.id; });
-    if (it_light != perception_traffic_lights_.end() &&
-        it_light->attributes.traffic_light_shape != TrafficLightShapeType::TLS_TURN_ARROUND_ARROW) {
-      is_only_uturn = false;
-      break;
-    }
-  }
-  if (!is_only_uturn) {
-    return true;
-  }
-  for (uint64_t lane_id : section_lanes_id) {
-    auto it_lane = std::find_if(lanes.begin(), lanes.end(), [lane_id](const LaneInfo &rhs) { return lane_id == rhs.id; });
-    if (it_lane != lanes.end() && it_lane->turn_type == TurnType::U_TURN) {
-      return true;
-    }
-  }
-  return false;
+  uint32_t cyber_counter = perception_traffic_light_info_ ? perception_traffic_light_info_->header.cycle_counter : 0;
+  LD_TRAFFIC_LOG << fmt::format("vis_counter:{} ld_traffic_straight {}", cyber_counter, traffic_lights_ld_.straight);
+  LD_TRAFFIC_LOG << fmt::format("vis_counter:{} ld_traffic_left     {}", cyber_counter, traffic_lights_ld_.left);
+  LD_TRAFFIC_LOG << fmt::format("vis_counter:{} ld_traffic_uturn    {}", cyber_counter, traffic_lights_ld_.u_turn);
+  LD_TRAFFIC_LOG << fmt::format("vis_counter:{} ld_traffic_right    {}", cyber_counter, traffic_lights_ld_.right);
 }
 
 void TrafficLightMapping::FindBestLight(const RoutingMapPtr &routing_map) {
@@ -892,8 +489,7 @@ void TrafficLightMapping::FindBestLight(const RoutingMapPtr &routing_map) {
         light_ids          = junction_light_ids_[it_lane->junction_id];
         break;
       }
-      if (it_lane->section_id != 0 && section_light_ids_.count(it_lane->section_id) > 0 &&
-          IsUturnSection(routing_map, it_ego_section->lane_ids, section_light_ids_[it_lane->section_id])) {
+      if (it_lane->section_id != 0 && section_light_ids_.count(it_lane->section_id) > 0) {
         target_section_id = it_lane->section_id;
         light_ids         = section_light_ids_[target_section_id];
         break;
@@ -920,219 +516,7 @@ void TrafficLightMapping::FindBestLight(const RoutingMapPtr &routing_map) {
       }
     }
   }
-  std::optional<byd::common::math::Polygon2d> junction_polygon{std::nullopt};
-
-  std::vector<uint64_t> prev_lane_ids;
-  constexpr double      width_offset_val = 5.0;
-
-  if (target_junction_id != 0) {
-    GetPolygonFromJunction(routing_map, target_junction_id, &prev_lane_ids);
-    if (junction_orin_vertical_ && junction_orin_connect_) {
-      double width_offset = 10.0;
-      LD_TRAFFIC_LOG << "filter_objs_by_vertical_&&_connnect.";
-      auto res_vertical = FilterTrfObjByPolygon(junction_orin_vertical_.value(), traffic_lights_vec, width_offset, width_offset, 80, -30);
-      auto res_connect  = FilterTrfObjByPolygon(junction_orin_connect_.value(), traffic_lights_vec, width_offset, width_offset, 80, -30);
-
-      std::vector<uint64_t>      obj_ids_filtered;
-      std::vector<uint64_t>      obj_ids_all;
-      std::vector<uint64_t>      obj_ids_invalid;
-      std::vector<TrfObjectInfo> filtered_objs;
-
-      for (const auto &obj_t : traffic_lights_vec) {
-        obj_ids_all.emplace_back(obj_t.id);
-        auto it_ver = std::find_if(res_vertical.begin(), res_vertical.end(), [&obj_t](const auto &rhs) { return rhs.id == obj_t.id; });
-        auto it_con = std::find_if(res_connect.begin(), res_connect.end(), [&obj_t](const auto &rhs) { return rhs.id == obj_t.id; });
-        if (it_ver != res_vertical.end() || it_con != res_connect.end()) {
-          filtered_objs.emplace_back(obj_t);
-          obj_ids_filtered.emplace_back(obj_t.id);
-        } else {
-          obj_ids_invalid.emplace_back(obj_t.id);
-        }
-      }
-      LD_TRAFFIC_LOG << fmt::format("vertical_connect_obj_all:{}  filtered:{}  invalid:{}", obj_ids_all, obj_ids_filtered, obj_ids_invalid);
-      traffic_lights_vec = filtered_objs;
-    }
-    if (junction_orin_vertical_) {
-      // filter traffic_light_vec.
-      traffic_lights_vec = FilterTrafObjsUturnPoly(routing_map, *junction_orin_vertical_, traffic_lights_vec, prev_lane_ids);
-
-      LD_TRAFFIC_LOG << "junction_vertical.";
-      auto res = FilterTrfObjByPolygon(*junction_orin_vertical_, traffic_lights_vec, width_offset_val, width_offset_val, 30);
-      GetTrafficArrow(res, uturn_shapes_, traffic_lights_prev_ld_.u_turn, traffic_lights_ld_.u_turn);
-      GetTrafficArrow(res, left_shapes_, traffic_lights_prev_ld_.left, traffic_lights_ld_.left);
-      GetTrafficArrow(res, straight_shapes_, traffic_lights_prev_ld_.straight, traffic_lights_ld_.straight);
-      GetTrafficArrow(res, right_shapes_, traffic_lights_prev_ld_.right, traffic_lights_ld_.right);
-      GetTrafficArrow(traffic_lights_vec, {message::sensor::TrafficLightShapeType::TLS_LEFT_ARROW}, traffic_lights_prev_ld_.u_turn,
-                      traffic_lights_ld_.u_turn);
-      GetTrafficArrow(res, {message::sensor::TrafficLightShapeType::TLS_CIRCULAR}, traffic_lights_prev_ld_.u_turn,
-                      traffic_lights_ld_.u_turn);
-      GetTrafficArrow(res, {message::sensor::TrafficLightShapeType::TLS_CIRCULAR}, traffic_lights_prev_ld_.left, traffic_lights_ld_.left);
-      GetTrafficArrow(res, {message::sensor::TrafficLightShapeType::TLS_CIRCULAR}, traffic_lights_prev_ld_.straight,
-                      traffic_lights_ld_.straight);
-    }
-    if (junction_orin_connect_) {
-      LD_TRAFFIC_LOG << "junction_connect.";
-      auto res = FilterTrfObjByPolygon(*junction_orin_connect_, traffic_lights_vec, width_offset_val, width_offset_val, 30);
-      GetTrafficArrow(res, uturn_shapes_, traffic_lights_prev_ld_.u_turn, traffic_lights_ld_.u_turn);
-      GetTrafficArrow(res, left_shapes_, traffic_lights_prev_ld_.left, traffic_lights_ld_.left);
-      GetTrafficArrow(res, straight_shapes_, traffic_lights_prev_ld_.straight, traffic_lights_ld_.straight);
-      GetTrafficArrow(res, right_shapes_, traffic_lights_prev_ld_.right, traffic_lights_ld_.right);
-      GetTrafficArrow(traffic_lights_vec, {message::sensor::TrafficLightShapeType::TLS_LEFT_ARROW}, traffic_lights_prev_ld_.u_turn,
-                      traffic_lights_ld_.u_turn);
-      GetTrafficArrow(res, {message::sensor::TrafficLightShapeType::TLS_CIRCULAR}, traffic_lights_prev_ld_.u_turn,
-                      traffic_lights_ld_.u_turn);
-      GetTrafficArrow(res, {message::sensor::TrafficLightShapeType::TLS_CIRCULAR}, traffic_lights_prev_ld_.left, traffic_lights_ld_.left);
-      GetTrafficArrow(res, {message::sensor::TrafficLightShapeType::TLS_CIRCULAR}, traffic_lights_prev_ld_.straight,
-                      traffic_lights_ld_.straight);
-    }
-  } else if (target_section_id != 0) {
-    GetPolygonFromSection(routing_map, target_section_id, &prev_lane_ids);
-    if (section_orin_vertical_) {
-      // filter traffic_light_vec.
-      // traffic_lights_vec = FilterTrafObjsUturnPoly(routing_map, *junction_orin_vertical_, traffic_lights_vec, prev_lane_ids);
-
-      LD_TRAFFIC_LOG << "section_vertical.";
-      auto res = FilterTrfObjByPolygon(*section_orin_vertical_, traffic_lights_vec, width_offset_val, width_offset_val,
-                                       60 - section_orin_vertical_->length);
-      GetTrafficArrow(res, uturn_shapes_, traffic_lights_prev_ld_.u_turn, traffic_lights_ld_.u_turn);
-      GetTrafficArrow(res, left_shapes_, traffic_lights_prev_ld_.left, traffic_lights_ld_.left);
-      GetTrafficArrow(res, straight_shapes_, traffic_lights_prev_ld_.straight, traffic_lights_ld_.straight);
-      GetTrafficArrow(res, right_shapes_, traffic_lights_prev_ld_.right, traffic_lights_ld_.right);
-      GetTrafficArrow(traffic_lights_vec, {message::sensor::TrafficLightShapeType::TLS_LEFT_ARROW}, traffic_lights_prev_ld_.u_turn,
-                      traffic_lights_ld_.u_turn);
-      GetTrafficArrow(res, {message::sensor::TrafficLightShapeType::TLS_CIRCULAR}, traffic_lights_prev_ld_.u_turn,
-                      traffic_lights_ld_.u_turn);
-      GetTrafficArrow(res, {message::sensor::TrafficLightShapeType::TLS_CIRCULAR}, traffic_lights_prev_ld_.left, traffic_lights_ld_.left);
-      GetTrafficArrow(res, {message::sensor::TrafficLightShapeType::TLS_CIRCULAR}, traffic_lights_prev_ld_.straight,
-                      traffic_lights_ld_.straight);
-    }
-  }
-
-  GetTrafficLightsLd(junction_polygon, traffic_lights_vec);
-
-  ProcessArrowCircleRightLight();
-
-  uint32_t cyber_counter = perception_traffic_light_info_ ? perception_traffic_light_info_->header.cycle_counter : 0;
-  LD_TRAFFIC_LOG << fmt::format("vis_counter:{} ld_traffic_straight {}", cyber_counter, traffic_lights_ld_.straight);
-  LD_TRAFFIC_LOG << fmt::format("vis_counter:{} ld_traffic_left     {}", cyber_counter, traffic_lights_ld_.left);
-  LD_TRAFFIC_LOG << fmt::format("vis_counter:{} ld_traffic_uturn    {}", cyber_counter, traffic_lights_ld_.u_turn);
-  LD_TRAFFIC_LOG << fmt::format("vis_counter:{} ld_traffic_right    {}", cyber_counter, traffic_lights_ld_.right);
-}
-
-void TrafficLightMapping::ProcessArrowCircleRightLight() {
-  if (traffic_lights_ld_.right.is_valid || traffic_lights_ld_.right.traffic_obj_info) {
-    return;
-  }
-  if (!traffic_lights_prev_ld_.right.is_valid || !traffic_lights_prev_ld_.right.traffic_obj_info) {
-    return;
-  }
-  const auto &prev_obj = traffic_lights_prev_ld_.right.traffic_obj_info;
-  LD_TRAFFIC_LOG << fmt::format("prev_right_obj_id:{} box_id:{}", prev_obj->id, prev_obj->traffic_light_box_id);
-  for (const auto &obj : perception_traffic_lights_) {
-    if (obj.traffic_light_box_id == prev_obj->traffic_light_box_id &&
-        (obj.attributes.traffic_light_shape == TrafficLightShapeType::TLS_RIGHT_ARROW ||
-         obj.attributes.traffic_light_shape == TrafficLightShapeType::TLS_UP_RIGHT_ARROW ||
-         obj.attributes.traffic_light_shape == TrafficLightShapeType::TLS_CIRCULAR)) {
-      return SetLightT(obj, traffic_lights_ld_.right);
-    }
-  }
-}
-
-std::vector<TrfObjectInfo> TrafficLightMapping::FilterTrafObjsUturnPoly(const RoutingMapPtr              &routing_map,
-                                                                        const TransformParams            &transform_para,
-                                                                        const std::vector<TrfObjectInfo> &traffic_lights_vec,
-                                                                        const std::vector<uint64_t>      &prev_lane_ids) {
-
-  if (routing_map == nullptr) {
-    return traffic_lights_vec;
-  }
-  const auto &lanes = routing_map->lanes;
-
-  double uturn_width = std::numeric_limits<double>::lowest();
-  for (uint64_t lane_id : prev_lane_ids) {
-    auto it_lane = std::find_if(lanes.begin(), lanes.end(), [lane_id](const LaneInfo &rhs) { return lane_id == rhs.id; });
-    if (it_lane == lanes.end() || it_lane->next_lane_ids.empty()) {
-      continue;
-    }
-    for (uint64_t next_id : it_lane->next_lane_ids) {
-      auto it_next_lane = std::find_if(lanes.begin(), lanes.end(),
-                                       [next_id](const LaneInfo &rhs) { return next_id == rhs.id && rhs.turn_type == TurnType::U_TURN; });
-      if (it_next_lane == lanes.end() || it_next_lane->points.empty()) {
-        continue;
-      }
-      Point3DD back_point{it_next_lane->points.back().x, it_next_lane->points.back().y, 0.0};
-      Point3DD new_pos = TransformCoordinate(back_point, transform_para);
-      LD_TRAFFIC_LOG << fmt::format("uturn_lane_id:{}  pos_old:{:.2f},{:.2f}  pos_new:{:.2f},{:.2f}", it_next_lane->id, back_point.x,
-                                    back_point.y, new_pos.x, new_pos.y);
-      if (new_pos.y > 3.0 && uturn_width < new_pos.y) {
-        uturn_width = new_pos.y;
-      }
-    }
-  }
-  double width_max = 12.0;
-  if (uturn_width > width_max) {
-    width_max = uturn_width;
-  } else {
-    width_max = std::max(width_max, uturn_width + 3.5);
-  }
-  width_max = std::min(width_max, 25.0);
-  auto res  = FilterTrfObjByPolygon(transform_para, traffic_lights_vec, width_max, 35, 80, -30);
-
-  std::vector<uint64_t> filtered_obj;
-  for (const auto &obj_raw : traffic_lights_vec) {
-    auto it_obj = std::find_if(res.begin(), res.end(), [&obj_raw](const TrfObjectInfo &rhs) { return obj_raw.id == rhs.id; });
-    if (it_obj == res.end()) {
-      filtered_obj.emplace_back(obj_raw.id);
-    }
-  }
-
-  LD_TRAFFIC_LOG << fmt::format("fitlered_obj_id:{} width_offset:{:.2f}", filtered_obj, uturn_width < -100 ? -100 : uturn_width);
-
-  return res;
-}
-
-std::vector<TrfObjectInfo> TrafficLightMapping::FilterTrfObjByPolygon(const TransformParams            &transform_para,
-                                                                      const std::vector<TrfObjectInfo> &traffic_lights_vec,
-                                                                      double width_offset_left, double width_offset_right,
-                                                                      double upper_offset, double lower_offset) {
-  std::vector<TrfObjectInfo> res;
-  for (const auto &obj : traffic_lights_vec) {
-    Point3DD obj_pos{obj.position.x, obj.position.y, 0.0};
-    auto     obj_new_pos = TransformCoordinate(obj_pos, transform_para);
-    bool     is_fullfill{false};
-    if (obj_new_pos.y < width_offset_left && obj_new_pos.y > -transform_para.width - width_offset_right && obj_new_pos.x > lower_offset &&
-        obj_new_pos.x < transform_para.length + upper_offset) {
-      res.emplace_back(obj);
-      is_fullfill = true;
-    }
-    LD_TRAFFIC_LOG << fmt::format(
-        "obj_id:{}  raw_pos x:{:.2f} y:{:.2f}  new_pos x:{:.2f} y:{:.2f} fullfill:{:d}  para:len:{:.2f} width:{:.2f}  offset_left:{:.2f}  "
-        "right:{:.2f} low:{:.2f} upper:{:.2f}",
-        obj.id, obj_pos.x, obj_pos.y, obj_new_pos.x, obj_new_pos.y, is_fullfill, transform_para.length, transform_para.width,
-        width_offset_left, width_offset_right, lower_offset, upper_offset);
-  }
-  std::vector<TrfObjectInfo> bak;
-  for (const auto &obj_0 : res) {
-    Vec2d pos_0{obj_0.position.x, obj_0.position.y};
-    for (const auto &obj_1 : traffic_lights_vec) {
-      auto it_res = std::find_if(res.begin(), res.end(), [&obj_1](const TrfObjectInfo &rhs) { return rhs.id == obj_1.id; });
-      if (it_res != res.end()) {
-        continue;
-      }
-      auto it_bak = std::find_if(bak.begin(), bak.end(), [&obj_1](const TrfObjectInfo &rhs) { return rhs.id == obj_1.id; });
-      if (it_bak != bak.end()) {
-        continue;
-      }
-      Vec2d  pos_1{obj_1.position.x, obj_1.position.y};
-      double dis = pos_0.DistanceTo(pos_1);
-      if (dis < 8) {
-        LD_TRAFFIC_LOG << fmt::format("obj_0:{} obj_1:{} dis:{:.2f}", obj_0.id, obj_1.id, dis);
-        bak.push_back(obj_1);
-      }
-    }
-  }
-  res.insert(res.end(), bak.begin(), bak.end());
-  return res;
+  GetTrafficLightsLd(traffic_lights_vec);
 }
 
 std::optional<std::tuple<uint64_t, double, bool>> TrafficLightMapping::MatchTrafficLightAndJunctionStopline(
@@ -1286,16 +670,7 @@ bool TrafficLightMapping::IsLightBlockFailed(const TrafficLight &light_prev, Tra
       light.traffic_reason == byd::msg::orin::routing_map::LaneInfo::SET_DEFAULT_OBJ) {
     is_current_invalid = true;
   }
-  bool is_light_dis_pan = false;
-  if (is_current_invalid && is_prev_valid && light_prev.traffic_obj_info) {
-    auto it_f = std::find_if(perception_traffic_lights_.begin(), perception_traffic_lights_.end(),
-                             [&light_prev](const TrfObjectInfo &rhs) { return rhs.id == light_prev.traffic_obj_info->id; });
-    if (it_f != perception_traffic_lights_.end()) {
-      is_light_dis_pan = true;
-      TRAFFIC_REC_LOG << fmt::format("turn_type:{}  is_light_dis_pan.", magic_enum::enum_name(light.turn_type));
-    }
-  }
-  if (is_current_invalid && !is_light_dis_pan && distance_to_ego_light_junction_prev_ > 0 && distance_to_ego_light_junction_prev_ < 50.0) {
+  if (is_current_invalid && distance_to_ego_light_junction_prev_ > 0 && distance_to_ego_light_junction_prev_ < 50.0) {
     if (is_prev_valid || light.invalid_counter > 0) {
       light.invalid_counter++;
     }
@@ -1305,18 +680,18 @@ bool TrafficLightMapping::IsLightBlockFailed(const TrafficLight &light_prev, Tra
       light.stay_prev_counter = 0;
       light.traffic_light_num = 1000;
       light.traffic_obj_info.reset();
-      TRAFFIC_REC_LOG << fmt::format("BLOCK_FAILED_check sucessful turn:{}  oringin_counter:{}  invalid_counter:{}  dis:{:.2f}",
-                                     magic_enum::enum_name(light.turn_type), light_prev.invalid_counter, light.invalid_counter,
-                                     distance_to_ego_light_junction_prev_);
+      NEW_LOG << fmt::format("BLOCK_FAILED_check sucessful turn:{}  oringin_counter:{}  invalid_counter:{}  dis:{:.2f}",
+                             magic_enum::enum_name(light.turn_type), light_prev.invalid_counter, light.invalid_counter,
+                             distance_to_ego_light_junction_prev_);
       return true;
     }
-    TRAFFIC_REC_LOG << fmt::format("BLOCK_FAILED_check failed counter_less_3. turn:{} oringin_counter:{}   invalid_counter:{}  dis:{:.2f}",
-                                   magic_enum::enum_name(light.turn_type), light_prev.invalid_counter, light.invalid_counter,
-                                   distance_to_ego_light_junction_prev_);
+    NEW_LOG << fmt::format("BLOCK_FAILED_check failed counter_less_3. turn:{} oringin_counter:{}   invalid_counter:{}  dis:{:.2f}",
+                           magic_enum::enum_name(light.turn_type), light_prev.invalid_counter, light.invalid_counter,
+                           distance_to_ego_light_junction_prev_);
     return false;
   }
-  TRAFFIC_REC_LOG << fmt::format("BLOCK_FAILED_check failed not in 50m->ego_junction turn:{}    dis:{:.2f}  current_invalid:{:d}",
-                                 magic_enum::enum_name(light.turn_type), distance_to_ego_light_junction_prev_, !is_current_invalid);
+  NEW_LOG << fmt::format("BLOCK_FAILED_check failed not in 50m->ego_junction turn:{}    dis:{:.2f}  current_invalid:{:d}",
+                         magic_enum::enum_name(light.turn_type), distance_to_ego_light_junction_prev_, !is_current_invalid);
   light.invalid_counter = 0;
   return false;
 }
@@ -1347,10 +722,6 @@ byd::msg::orin::routing_map::LightStatus GetColorStatus(cem::message::sensor::Tr
     }
     case cem::message::sensor::TrafficLightColorType::TLC_NONE_LIGHT: {
       return byd::msg::orin::routing_map::LightStatus::NONE_LIGHT;
-    }
-    case cem::message::sensor::TrafficLightColorType::TLC_NOT_MATCH:
-    case cem::message::sensor::TrafficLightColorType::TLC_CLOUD_NOMATCH: {
-      return byd::msg::orin::routing_map::LightStatus::CLOUD_LIGHT_NOMATCH;
     }
     default: {
       return byd::msg::orin::routing_map::LightStatus::UNKNOWN_LIGHT;
@@ -1401,12 +772,6 @@ void TrafficLightMapping::IsRightExit() {
     traffic_lights_.right.is_valid = false;
     traffic_lights_.right.color    = message::sensor::TLC_UNKNOWN;
   }
-  if (traffic_lights_.right.is_valid && traffic_lights_.right.color == message::sensor::TLC_GREEN &&
-      traffic_lights_.right.traffic_reason == byd::msg::orin::routing_map::LaneInfo::SET_DEFAULT_OBJ) {
-    traffic_lights_.right.is_valid       = false;
-    traffic_lights_.right.color          = message::sensor::TLC_NONE_LIGHT;
-    traffic_lights_.right.traffic_reason = byd::msg::orin::routing_map::LaneInfo::UNKNOWN_STATE;
-  }
   NEW_LOG << fmt::format("is_right_exist:{:d}", is_right_exist);
 }
 
@@ -1444,8 +809,7 @@ void TrafficLightMapping::BindingTrafficLightToBev(const BevMapInfoPtr &bev_map)
         return is_flash ? BevTrafficLightState::TL_COLOR_GREEN : BevTrafficLightState::TL_COLOR_GREEN_FLASH;
       }
       case cem::message::sensor::TrafficLightColorType::TLC_RED: {
-        // return is_flash ? BevTrafficLightState::TL_COLOR_RED : BevTrafficLightState::TL_COLOR_RED_FLASH;
-        return BevTrafficLightState::TL_COLOR_RED;
+        return is_flash ? BevTrafficLightState::TL_COLOR_RED : BevTrafficLightState::TL_COLOR_RED_FLASH;
       }
       case cem::message::sensor::TrafficLightColorType::TLC_YELLOW: {
         return is_flash ? BevTrafficLightState::TL_COLOR_YELLOW_FLASH : BevTrafficLightState::TL_COLOR_YELLOW;
@@ -1602,12 +966,11 @@ void TrafficLightMapping::BindingTrafficLightToBev(const BevMapInfoPtr &bev_map)
         if (light_status != nullptr) {
           light_status->add_lane_ids(bev_lane.id);
         }
-        bev_lane.trafficlight_state         = ConvertLightState(light_t.color, light_t.traffic_light_flashing);
-        bev_lane.traffic_light_num          = light_t.traffic_light_num;
-        bev_lane.traffic_light_seq_num      = light_t.perception_seq_num;
-        bev_lane.stay_prev_counter          = light_t.stay_prev_counter;
-        bev_lane.traffic_set_reason         = light_t.traffic_reason;
-        bev_lane.yellow_flashing_start_time = light_t.yellow_flashing_start_time;
+        bev_lane.trafficlight_state    = ConvertLightState(light_t.color, light_t.traffic_light_flashing);
+        bev_lane.traffic_light_num     = light_t.traffic_light_num;
+        bev_lane.traffic_light_seq_num = light_t.perception_seq_num;
+        bev_lane.stay_prev_counter     = light_t.stay_prev_counter;
+        bev_lane.traffic_set_reason    = light_t.traffic_reason;
         if (traffic_lights_.distance_to_stopline > k_epsilon && traffic_lights_.distance_to_stopline < 10) {
           bev_lane.stopline_angle_flag = 2;
         }
@@ -1957,10 +1320,6 @@ std::optional<LaneInfo> TrafficLightMapping::SetLaneTrafficInfo(const LaneInfo &
       turn_temp = TurnType::NO_TURN;
     }
   }
-  if (lane_traffic.turn_type == TurnType::RIGHT_TURN && IsSectionEnteringRoundabout(lane_traffic.section_id)) {
-    TRAFFIC_LOG << fmt::format("lane_id:{} section_id:{} is_entering_roundabout.", lane_traffic.id, lane_traffic.section_id);
-    turn_temp = TurnType::NO_TURN;
-  }
   const auto &light_status = traffic_lights_.GetLightState(turn_temp);
   if (!light_status.is_valid) {
     TRAFFIC_LOG << "  lane_id:" << lane_traffic.id << "  turn_type:" << static_cast<int>(lane_traffic.turn_type);
@@ -1992,11 +1351,6 @@ std::optional<LaneInfo> TrafficLightMapping::SetLaneTrafficInfo(const LaneInfo &
   it_lane_output->traffic_light_seq_num = light_status.perception_seq_num;
   it_lane_output->traffic_set_reason    = light_status.traffic_reason;
   it_lane_output->stay_prev_counter     = light_status.stay_prev_counter;
-
-  it_lane_output->cloud_junction_type      = cloud_traffic_light_ ? cloud_traffic_light_->junction_cloud_type : 0;
-  it_lane_output->traffic_match_cloud_file = cloud_traffic_light_.has_value();
-
-  it_lane_output->yellow_flashing_start_time = light_status.yellow_flashing_start_time;
 
   bool is_special_lane = it_lane_output->id == 70106365 || it_lane_output->id == 70108379;
   bool is_special_road = traffic_lights_.distance_to_stopline > k_epsilon && traffic_lights_.distance_to_stopline < 10;
@@ -2030,7 +1384,7 @@ std::optional<LaneInfo> TrafficLightMapping::SetLaneTrafficInfo(const LaneInfo &
       it_lane_output->junction_id = 1;
     }
 
-    if (need_set_junction_id && it_lane_output->junction_id == 0) {
+    if (!need_set_junction_id && it_lane_output->junction_id == 0) {
       for (uint64_t id_prev : it_lane_output->previous_lane_ids) {
         auto [stop_line_id, stop_line_front, stop_line_back] = LaneStopLineInfo(lanes_output, stop_lines, id_prev);
         if (stop_line_id != 0 && stop_line_back) {
@@ -2143,10 +1497,6 @@ void TrafficLightMapping::GetJunctionIdsPool(const RoutingMapPtr &routing_map) {
     for (uint64_t lane_id : section_current.lane_ids) {
       auto it_lane = std::find_if(lanes.begin(), lanes.end(), [&lane_id](const auto &lane_t) { return lane_t.id == lane_id; });
       if (it_lane == lanes.end()) {
-        continue;
-      }
-      if (IsLinkType(section_current.link_type, byd::msg::orin::routing_map::SectionInfo::LT_TOLLBOOTH)) {
-        LD_TRAFFIC_LOG << fmt::format("skip lane_id:{}  section_id:{}  it is a tolltooth.", it_lane->id, it_lane->section_id);
         continue;
       }
       if (it_lane->type == message::env_model::LaneType::LANE_VIRTUAL_JUNCTION && it_lane->junction_id != 0) {
@@ -2300,7 +1650,7 @@ bool TrafficLightMapping::LaneStoplineTrafficLight(uint64_t section_id, const La
   bool is_light_block_failed = traffic_lights_.GetLightState(lane_rhs.turn_type).color == message::sensor::TLC_BLOCK_FAILED;
   bool is_right_dedicated    = sd_navigation_city_ && sd_navigation_city_->IsEgoInDedicatedRightLane();
 
-  constexpr double extend_lenght = 4.0;
+  constexpr double extend_lenght = 3.0;
 
   double dis_threshold = lane_belong_traffic_light_threshold;
   if (is_right_dedicated) {
@@ -2357,222 +1707,6 @@ bool TrafficLightMapping::LaneStoplineTrafficLight(uint64_t section_id, const La
   return lane_has_stop_line;
 }
 
-uint64_t TrafficLightMapping::GetHisTimes(TurnType turn_type, uint64_t id) {
-  const auto &seq_his = history_ids_[turn_type];
-  uint64_t    res     = 0;
-  for (const auto &[_, id_t] : seq_his) {
-    if (id_t == id) {
-      res++;
-    }
-  }
-  return res;
-}
-
-void TrafficLightMapping::UpdateHistoryObjId() {
-  if (!perception_traffic_light_info_) {
-    return;
-  }
-  uint64_t seq_num       = perception_traffic_light_info_->header.cycle_counter;
-  auto     UpdateTurnHis = [&](const TrafficLight &traffic_light, TurnType turn_type) {
-    auto                 &seq = history_ids_[turn_type];
-    std::vector<uint64_t> ids;
-    for (const auto &[_, id_t] : seq) {
-      ids.emplace_back(id_t);
-    }
-    LD_TRAFFIC_LOG << fmt::format("seq_num:{} turn_type:{}  ids:{}", seq_num, magic_enum::enum_name(turn_type), ids);
-    if (traffic_light.traffic_obj_info) {
-      if (!seq.empty() && seq.back().first == seq_num) {
-        seq.pop_back();
-      }
-      seq.emplace_back(seq_num, traffic_light.traffic_obj_info->id);
-    } else {
-      seq.emplace_back(seq_num, 0);
-    }
-  };
-  UpdateTurnHis(traffic_lights_ld_.straight, TurnType::NO_TURN);
-  UpdateTurnHis(traffic_lights_ld_.left, TurnType::LEFT_TURN);
-  UpdateTurnHis(traffic_lights_ld_.right, TurnType::RIGHT_TURN);
-  UpdateTurnHis(traffic_lights_ld_.u_turn, TurnType::U_TURN);
-}
-
-void TrafficLightMapping::PrevStopWhenLeftWait(const RoutingMapPtr &routing_map, const RoutingMapPtr &routing_map_output,
-                                               uint64_t junction_id, double distance_to_junction) {
-  auto it_section = std::find_if(routing_map->route.sections.begin(), routing_map->route.sections.end(),
-                                 [&routing_map](const auto &section) { return routing_map->route.navi_start.section_id == section.id; });
-  if (it_section == routing_map->route.sections.end()) {
-    return;
-  }
-  if (distance_to_junction > 40) {
-    return;
-  }
-  if (!traffic_lights_.left.traffic_obj_info) {
-    return;
-  }
-  if (!junction_orin_vertical_) {
-    return;
-  }
-  const auto &left_obj      = traffic_lights_.left.traffic_obj_info;
-  uint64_t    left_his_time = GetHisTimes(TurnType::LEFT_TURN, left_obj->id);
-  Point3DD    obj_pos{left_obj->position.x, left_obj->position.y, 0.0};
-  auto        obj_pos_new = TransformCoordinate(obj_pos, *junction_orin_vertical_);
-  LD_TRAFFIC_LOG << fmt::format("left_obj_id:{} left_time:{} raw_pos:{:.2f},{:.2f}  new_pos:{:.2f},{:.2f}", left_obj->id, left_his_time,
-                                left_obj->position.x, left_obj->position.y, obj_pos_new.x, obj_pos_new.y);
-  if (obj_pos_new.x < 10 || left_his_time < 3) {
-    return;
-  }
-
-  LD_TRAFFIC_LOG << "ego_lane_id:" << ego_ld_lane_id_;
-  if (ego_ld_lane_id_ == 0) {
-    return;
-  }
-  const auto &lanes       = routing_map->lanes;
-  const auto &it_ego_lane = std::find_if(lanes.begin(), lanes.end(), [&](const LaneInfo &rhs) { return rhs.id == ego_ld_lane_id_; });
-  if (it_ego_lane == lanes.end()) {
-    LD_TRAFFIC_LOG << "not_find_ego_lane.";
-    return;
-  }
-  // if (it_ego_lane->section_id != it_section->id) {
-  //   LD_TRAFFIC_LOG << fmt::format("ego_lane_section_id:{}  it_section_id:{}", it_ego_lane->section_id, it_section->id);
-  //   return;
-  // }
-  if (it_ego_lane->next_lane_ids.empty()) {
-    return;
-  }
-  std::vector<uint64_t> next_lane_ids{it_ego_lane->id};
-
-  std::vector<const LaneInfo *> left_wait_lane;
-  std::vector<uint64_t>         id_tmp;
-  bool                          find_junction = false;
-
-  for (; it_section != routing_map->route.sections.end(); it_section++) {
-    LD_TRAFFIC_LOG << fmt::format("section_id:{} next_lane_id:{}", it_section->id, next_lane_ids);
-    auto it_lane = lanes.end();
-    for (uint64_t id_t : it_section->lane_ids) {
-      it_lane = std::find_if(lanes.begin(), lanes.end(), [id_t](const LaneInfo &rhs) { return rhs.id == id_t; });
-      if (it_lane == lanes.end()) {
-        LD_TRAFFIC_LOG << fmt::format("not_find_next_lane:{}", next_lane_ids);
-        return;
-      }
-      if (it_lane->junction_id == junction_id) {
-        find_junction = true;
-      }
-      if (std::find(next_lane_ids.begin(), next_lane_ids.end(), id_t) == next_lane_ids.end()) {
-        continue;
-      }
-      break;
-    }
-    if (it_lane == lanes.end()) {
-      LD_TRAFFIC_LOG << "not_find_next_lane.";
-      continue;
-    }
-
-    if (!left_wait_lane.empty() && it_lane->junction_id == junction_id && it_lane->type != LaneType::LANE_LEFT_WAIT) {
-      break;
-    }
-    if (it_lane->junction_id != junction_id && find_junction) {
-      break;
-    }
-    if (it_lane->junction_id == junction_id && it_lane->type == LaneType::LANE_LEFT_WAIT) {
-      id_tmp.emplace_back(it_lane->id);
-      left_wait_lane.emplace_back(&(*it_lane));
-      find_junction = true;
-    }
-    if (!it_lane->next_lane_ids.empty()) {
-      next_lane_ids = it_lane->next_lane_ids;
-    }
-  }
-  if (left_wait_lane.empty()) {
-    return;
-  }
-  LD_TRAFFIC_LOG << fmt::format("left_wait_ids:{}", id_tmp);
-
-  std::vector<Vec2d> points;
-  for (auto &it : left_wait_lane) {
-    for (const auto &point : it->points) {
-      points.emplace_back(point.x, point.y);
-    }
-  }
-  MultiLineSegment line_seg;
-  line_seg.Init(points);
-  double delta_dis    = 1.0;
-  double dis_stopline = 0.0;
-  for (; dis_stopline < line_seg.Length(); dis_stopline += delta_dis) {
-    auto            val = line_seg.GetPointAtDistance(dis_stopline);
-    TransformParams trans_orin;
-    trans_orin.tx    = val.first.x();
-    trans_orin.ty    = val.first.y();
-    trans_orin.theta = val.second;
-    Point3DD pos_new = TransformCoordinate(obj_pos, trans_orin);
-    double   angle   = atan2(pos_new.y, pos_new.x) * RAD_TO_DEG;
-    LD_TRAFFIC_LOG << fmt::format("dis_stopline:{:.2f} orin:[{:.2f},{:.2f},{:.2f}] pos_new:[{:.2f},{:.2f}] angle:{:.2f}", dis_stopline,
-                                  trans_orin.tx, trans_orin.ty, trans_orin.theta, pos_new.x, pos_new.y, angle);
-    if (std::fabs(angle) > 15) {
-      break;
-    }
-  }
-  double dis_curr = line_seg.Length() - dis_stopline;
-  double res      = 0.0;
-  if (left_distance_stopline_map_.count(junction_id) == 0) {
-    res = dis_curr;
-  } else {
-    res = std::max(left_distance_stopline_map_[junction_id], dis_curr);
-  }
-  left_distance_stopline_map_[junction_id] = res;
-
-  auto &lanes_output = routing_map_output->lanes;
-
-  std::vector<uint64_t> ids_t_01;
-  std::set<uint64_t>    next_section_ids;
-  for (const auto &lane_t : left_wait_lane) {
-    auto it_sec = std::find_if(routing_map->route.sections.begin(), routing_map->route.sections.end(),
-                               [&lane_t](const auto &sec_t) { return lane_t->section_id == sec_t.id; });
-    if (it_sec == routing_map->route.sections.end()) {
-      continue;
-    }
-    ++it_sec;
-    if (it_sec == routing_map->route.sections.end()) {
-      continue;
-    }
-    next_section_ids.insert(it_sec->id);
-  }
-  for (const auto &sec_id_t : next_section_ids) {
-    std::for_each(lanes_output.begin(), lanes_output.end(), [&](LaneInfo &rhs) {
-      if (rhs.section_id == sec_id_t) {
-        ids_t_01.emplace_back(rhs.id);
-        rhs.distance_to_stopline = res;
-      }
-    });
-  }
-  LD_TRAFFIC_LOG << fmt::format("distance_to_stopline:{:.2f}  res:{:.2f} ids:{} sec_ids:{}", dis_curr, res, ids_t_01, next_section_ids);
-}
-
-bool TrafficLightMapping::IsSectionEnteringRoundabout(uint64_t section_id) {
-  bool res_flag{false};
-  if (routing_map_ptr_ == nullptr) {
-    return res_flag;
-  }
-  const auto &sections = routing_map_ptr_->route.sections;
-  auto it_sec = std::find_if(sections.begin(), sections.end(), [section_id](const SectionInfo &rhs) { return rhs.id == section_id; });
-  if (it_sec == sections.end() || sections.empty()) {
-    return res_flag;
-  }
-
-  int sec_idx = static_cast<int>(std::distance(sections.begin(), it_sec));
-  if (IsLinkType(it_sec->link_type, byd::msg::orin::routing_map::SectionInfo::LT_ROUNDABOUT)) {
-    return false;
-  }
-  if (sec_idx == 0 || sec_idx + 1 == static_cast<int>(sections.size())) {
-    return false;
-  }
-  bool prev_is_roundabout = IsLinkType(sections.at(sec_idx - 1).link_type, byd::msg::orin::routing_map::SectionInfo::LT_ROUNDABOUT);
-  bool next_is_roundabout = IsLinkType(sections.at(sec_idx + 1).link_type, byd::msg::orin::routing_map::SectionInfo::LT_ROUNDABOUT);
-  if (!prev_is_roundabout && next_is_roundabout) {
-    return true;
-  }
-
-  return res_flag;
-}
-
 void TrafficLightMapping::SetTrafficLight(const RoutingMapPtr &routing_map, const RoutingMapPtr &routing_map_output) {
   if (routing_map == nullptr || routing_map_output == nullptr) {
     TRAFFIC_LOG << fmt::format("routing_map is nullptr.routing_map:{:p}  routing_map_out:{:p}", fmt::ptr(routing_map),
@@ -2582,10 +1716,8 @@ void TrafficLightMapping::SetTrafficLight(const RoutingMapPtr &routing_map, cons
 
   double distance_to_junction = std::numeric_limits<double>::infinity();
   previous_junction_points_.clear();
-  distance_to_junction_                          = std::numeric_limits<double>::infinity();
-  double distance_to_section_over_first_junction = std::numeric_limits<double>::infinity();
-  distance_to_section_over_first_junction_       = std::numeric_limits<double>::infinity();
-  first_section_over_juntion_                    = nullptr;
+  distance_to_junction_       = std::numeric_limits<double>::infinity();
+  first_section_over_juntion_ = nullptr;
 
   TRAFFIC_LOG << "section_id:" << routing_map->route.navi_start.section_id << "  offset:" << routing_map->route.navi_start.s_offset;
 
@@ -2629,38 +1761,25 @@ void TrafficLightMapping::SetTrafficLight(const RoutingMapPtr &routing_map, cons
   IsLightBlockFailed(traffic_lights_prev_ld_.right, traffic_lights_ld_.right);
   IsLightBlockFailed(traffic_lights_prev_ld_.straight, traffic_lights_ld_.straight);
   uint32_t cyber_counter = perception_traffic_light_info_ ? perception_traffic_light_info_->header.cycle_counter : 0;
-  LD_TRAFFIC_LOG << fmt::format("vis_seq:{} S {}", cyber_counter, traffic_lights_ld_.straight);
-  LD_TRAFFIC_LOG << fmt::format("vis_seq:{} L {}", cyber_counter, traffic_lights_ld_.left);
-  LD_TRAFFIC_LOG << fmt::format("vis_seq:{} U {}", cyber_counter, traffic_lights_ld_.u_turn);
-  LD_TRAFFIC_LOG << fmt::format("vis_seq:{} R {}", cyber_counter, traffic_lights_ld_.right);
-  if (!cloud_traffic_light_) {
-    traffic_lights_ = traffic_lights_ld_;
-  } else {
-    LD_TRAFFIC_LOG << fmt::format("vis_counter:{} cloud_traffic_straight {}", cyber_counter, traffic_lights_.straight);
-    LD_TRAFFIC_LOG << fmt::format("vis_counter:{} cloud_traffic_left     {}", cyber_counter, traffic_lights_.left);
-    LD_TRAFFIC_LOG << fmt::format("vis_counter:{} cloud_traffic_uturn    {}", cyber_counter, traffic_lights_.u_turn);
-    LD_TRAFFIC_LOG << fmt::format("vis_counter:{} cloud_traffic_right    {}", cyber_counter, traffic_lights_.right);
-  }
+  LD_TRAFFIC_LOG << fmt::format("vis_counter:{} final_ld_traffic_straight {}", cyber_counter, traffic_lights_ld_.straight);
+  LD_TRAFFIC_LOG << fmt::format("vis_counter:{} final_ld_traffic_left     {}", cyber_counter, traffic_lights_ld_.left);
+  LD_TRAFFIC_LOG << fmt::format("vis_counter:{} final_ld_traffic_uturn    {}", cyber_counter, traffic_lights_ld_.u_turn);
+  LD_TRAFFIC_LOG << fmt::format("vis_counter:{} final_ld_traffic_right    {}", cyber_counter, traffic_lights_ld_.right);
+  traffic_lights_         = traffic_lights_ld_;
   traffic_lights_prev_ld_ = traffic_lights_ld_;
-  UpdateHistoryObjId();
   SetAllLightStatus();
 
-  auto     find_match  = MatchTrafficLightAndJunctionStopline(routing_map);
-  bool     is_junction = false;
-  uint64_t target_id   = 0;
+  auto find_match = MatchTrafficLightAndJunctionStopline(routing_map);
 
   bool is_junction_match{false};
   if (find_match) {
-    double dis_route_temp    = 0.0;
-    double match_section_pos = 0.0;
-    double match_section_len = 0.0;
-    double ego_section_pos   = 0.0;
-    bool   is_find_ego       = false;
-
-    is_junction = std::get<2>(*find_match);
-    target_id   = std::get<0>(*find_match);
+    double   dis_route_temp    = 0.0;
+    double   match_section_pos = 0.0;
+    double   match_section_len = 0.0;
+    double   ego_section_pos   = 0.0;
+    bool     is_junction       = std::get<2>(*find_match);
+    uint64_t target_id         = std::get<0>(*find_match);
     TRAFFIC_LOG << fmt::format("match_{}_id:{}", is_junction ? "junction" : "section", target_id);
-
     for (auto &section : routing_map->route.sections) {
       double dis_raw = dis_route_temp;
       dis_route_temp += section.length;
@@ -2671,52 +1790,22 @@ void TrafficLightMapping::SetTrafficLight(const RoutingMapPtr &routing_map, cons
         if (it_lane == lanes.end() || it_lane->type == LaneType::LANE_NON_MOTOR) {
           continue;
         }
-        bool stopline_valid    = LaneStoplineTrafficLight(section.id, *it_lane, -50);
         bool is_junction_valid = is_junction && target_id == it_lane->junction_id;
-        bool is_section_valid  = !is_junction && target_id == section.id && stopline_valid;
+        bool is_section_valid  = !is_junction && target_id == section.id;
         if (!is_junction_valid && !is_section_valid) {
-          // LD_TRAFFIC_LOG << fmt::format("is_junction:{:d}  target_id:{} stopline_valid:{:d}", is_junction, target_id, stopline_valid);
           continue;
         }
-        double dis_ego_junction = is_find_ego ? dis_route_temp - ego_section_pos - section.length : std::numeric_limits<double>::infinity();
-        LD_TRAFFIC_LOG << "lane_id:" << it_lane->id
-                       << fmt::format(" junction valid:{} id:{}  dis:{:.2f}  lane_type:{}", is_junction_valid, it_lane->junction_id,
-                                      dis_ego_junction, it_lane->type);
         if (auto lane_out = SetLaneTrafficInfo(*it_lane, lanes_output, stop_lines); lane_out.has_value()) {
           match_section_pos = dis_route_temp;
           match_section_len = section.length;
           is_junction_match = true;
           lanes_traffic_all.emplace_back(*lane_out);
-        } else if (is_junction_valid && it_lane->junction_id != 0 && dis_ego_junction > -20 && dis_ego_junction < 80 &&
-                   (it_lane->type == LaneType::LANE_VIRTUAL_JUNCTION || it_lane->type == LaneType::LANE_VIRTUAL_COMMON)) {
-          auto it_t =
-              std::find_if(lanes_output.begin(), lanes_output.end(), [&it_lane](const LaneInfo &rhs) { return rhs.id == it_lane->id; });
-          if (it_t != lanes_output.end()) {
-            if (traffic_lights_.left.traffic_obj_info && it_lane->turn_type == TurnType::NO_TURN) {
-              it_t->light_info.maybe_exist_light = true;
-            } else if (traffic_lights_.straight.traffic_obj_info && it_lane->turn_type == TurnType::LEFT_TURN) {
-              it_t->light_info.maybe_exist_light = true;
-            } else if (traffic_lights_.straight.traffic_obj_info && it_lane->turn_type == TurnType::U_TURN) {
-              it_t->light_info.maybe_exist_light = true;
-            }
-            if (it_t->light_info.maybe_exist_light) {
-              LD_TRAFFIC_LOG << fmt::format("lane_id:{}  maybe_exist_light=1.", it_t->id);
-            }
-          }
         }
       }
       if (section.id == it_section->id) {
         ego_section_pos = dis_route_temp + routing_map->route.navi_start.s_offset - section.length;
-        is_find_ego     = true;
       }
-      if (is_find_ego) {
-        LD_TRAFFIC_LOG << fmt::format("is_find_ego:{:d}  dis:{:.2f},{:.2f},{:.2f}", is_find_ego, dis_route_temp, ego_section_pos,
-                                      dis_route_temp - ego_section_pos);
-      }
-      // if (is_find_ego && dis_route_temp - ego_section_pos > 1000) {
-      //   break;
-      // }
-      if (dis_route_temp > 1000) {
+      if (dis_route_temp > 500) {
         break;
       }
     }
@@ -2728,14 +1817,12 @@ void TrafficLightMapping::SetTrafficLight(const RoutingMapPtr &routing_map, cons
 
   bool is_virtual_lane_light{false};
   for (; it_section != routing_map->route.sections.end(); it_section++) {
-    section_is_junction_current  = false;
-    bool is_section_has_junction = false;
+    section_is_junction_current = false;
     for (auto lane_id : it_section->lane_ids) {
       auto it_lane = std::find_if(lanes.begin(), lanes.end(), [&lane_id](const auto &lane_t) { return lane_t.id == lane_id; });
       if (it_lane == lanes.end() || it_lane->type == LaneType::LANE_NON_MOTOR) {
         continue;
       }
-      is_section_has_junction              = it_lane->junction_id != 0;
       double min_distance_to_traffic_light = LaneNearDisToJunction(*it_lane);
 
       bool is_light_block_failed       = traffic_lights_.GetLightState(it_lane->turn_type).color == message::sensor::TLC_BLOCK_FAILED;
@@ -2800,10 +1887,8 @@ void TrafficLightMapping::SetTrafficLight(const RoutingMapPtr &routing_map, cons
     }
     double dis_t = distance_to_junction;
     if (section_is_junction_current && !section_is_junction_prev) {
-      stop_count_dis       = true;
-      is_section_junction_ = is_section_has_junction;
+      stop_count_dis = true;
       distance_to_junction -= routing_map->route.navi_start.s_offset;
-      distance_to_section_over_first_junction = distance_to_junction;
       TRAFFIC_LOG << "find_junction section:" << it_section->id << "  length:" << it_section->length
                   << "  s_offset:" << routing_map->route.navi_start.s_offset << "  distance_to_junction:" << distance_to_junction
                   << "  raw_dis:" << dis_t;
@@ -2811,9 +1896,6 @@ void TrafficLightMapping::SetTrafficLight(const RoutingMapPtr &routing_map, cons
       distance_to_junction += it_section->length;
       TRAFFIC_LOG << "no_find_junction section:" << it_section->id << "  length:" << it_section->length
                   << "  distance_to_junction:" << distance_to_junction << "  raw_dis:" << dis_t;
-    }
-    if (!std::isinf(distance_to_section_over_first_junction)) {
-      distance_to_section_over_first_junction += it_section->length;
     }
     // check the first junction has been expired .
     if (!section_is_junction_current && section_is_junction_prev) {
@@ -2832,9 +1914,6 @@ void TrafficLightMapping::SetTrafficLight(const RoutingMapPtr &routing_map, cons
     ProcessNotRoutingLanes(routing_map_output, lanes_traffic_all);
   }
   SetJunctionPoints(routing_map, lanes_traffic_all);
-  if (is_junction) {
-    PrevStopWhenLeftWait(routing_map, routing_map_output, target_id, distance_to_junction);
-  }
 
   if (stop_count_dis) {
     if (distance_to_junction >= 0.0) {
@@ -2845,12 +1924,11 @@ void TrafficLightMapping::SetTrafficLight(const RoutingMapPtr &routing_map, cons
     } else {
       distance_to_junction_ = 0.0;
     }
-    distance_to_section_over_first_junction_ = distance_to_section_over_first_junction;
   }
   TRAFFIC_LOG << fmt::format("is_match:{:d}  dis:{:.2f}", is_junction_match, dis_ego_light_junction_);
   TRAFFIC_LOG << fmt::format("routing_map_counter:{}  raw_distance_to_junction:{:.2f}   output_distance_to_junction:{:.2f}",
                              routing_map->header.cycle_counter, distance_to_junction, distance_to_junction_);
-  // SetE2EInfo(routing_map_output, lanes_traffic_all);
+  SetE2EInfo(routing_map_output, lanes_traffic_all);
 }
 
 bool TrafficLightMapping::IsValid(const TrafficLight &light) {
@@ -2993,7 +2071,7 @@ void TrafficLightMapping::SetTrafficLightColor() {
     if (obj.attributes.traffic_light_flashing) {
       switch (obj.attributes.traffic_light_color) {
         case TrafficLightColorType::TLC_RED:
-          obj.attributes.traffic_light_color = TrafficLightColorType::TLC_RED;
+          obj.attributes.traffic_light_color = TrafficLightColorType::TLC_RED_FLASHING;
           break;
         case TrafficLightColorType::TLC_GREEN:
           obj.attributes.traffic_light_color = TrafficLightColorType::TLC_GREEN_FLASHING;
@@ -3152,142 +2230,12 @@ TrfObjectInfo TrafficLightMapping::FindOptObj(const TrafficLight                
   return *(valid_objs.front());
 };
 
-bool TrafficLightMapping::IsSameLight(const TrfObjectInfo &lhs, const TrfObjectInfo &rhs) {
-  switch (lhs.attributes.traffic_light_color) {
-    case TrafficLightColorType::TLC_RED_FLASHING: {
-      return rhs.attributes.traffic_light_color == TrafficLightColorType::TLC_RED_FLASHING;
-    }
-    case TrafficLightColorType::TLC_GREEN_FLASHING: {
-      return rhs.attributes.traffic_light_color == TrafficLightColorType::TLC_GREEN_FLASHING;
-    }
-    case TrafficLightColorType::TLC_YELLOW_FLASHING: {
-      return rhs.attributes.traffic_light_color == TrafficLightColorType::TLC_YELLOW_FLASHING;
-    }
-    default:
-      return false;
-  }
-}
-
-cem::message::sensor::TrafficLightColorType TrafficLightMapping::IsFlashLight(const TrfObjectInfo &lhs) {
-  if (!lhs.attributes.traffic_light_flashing) {
-    return lhs.attributes.traffic_light_color;
-  }
-  bool                  is_light_flash = true;
-  std::vector<uint64_t> set_ids;
-  for (const auto &obj : perception_traffic_lights_) {
-    if (obj.id == lhs.id) {
-      continue;
-    }
-    Vec2d  lhs_pos{lhs.position.x, lhs.position.y};
-    Vec2d  rhs_pos{obj.position.x, obj.position.y};
-    double dis_delta = lhs_pos.DistanceTo(rhs_pos);
-    if (dis_delta > 8.0) {
-      continue;
-    }
-    if (lhs.attributes.traffic_light_direction != obj.attributes.traffic_light_direction) {
-      continue;
-    }
-    if (lhs.attributes.traffic_light_shape != obj.attributes.traffic_light_shape) {
-      continue;
-    }
-    if (!IsSameLight(lhs, obj)) {
-      set_ids.emplace_back(obj.id);
-      is_light_flash = false;
-    }
-  }
-  if (is_light_flash) {
-    return lhs.attributes.traffic_light_color;
-  }
-  LD_TRAFFIC_LOG << fmt::format("obj_id:{}  not_flash_ids:{}  orin_color:{}  remove_flash.", lhs.id, set_ids,
-                                magic_enum::enum_name(lhs.attributes.traffic_light_color));
-
-  switch (lhs.attributes.traffic_light_color) {
-    case TrafficLightColorType::TLC_RED_FLASHING: {
-      return TrafficLightColorType::TLC_RED;
-    }
-    case TrafficLightColorType::TLC_GREEN_FLASHING: {
-      return TrafficLightColorType::TLC_GREEN;
-    }
-    case TrafficLightColorType::TLC_YELLOW_FLASHING: {
-      return TrafficLightColorType::TLC_YELLOW;
-    }
-    default:
-      return lhs.attributes.traffic_light_color;
-  }
-}
-
-std::vector<TrafficLightShapeType> TrafficLightMapping::GetTurnType(TurnType turn_type) {
-  switch (turn_type) {
-    case TurnType::LEFT_TURN:
-      return left_shapes_;
-    case TurnType::U_TURN:
-      return uturn_shapes_;
-    case TurnType::NO_TURN:
-      return straight_shapes_;
-    case TurnType::RIGHT_TURN:
-      return right_shapes_;
-    default:
-      return {};
-  }
-  return {};
-};
-
 void TrafficLightMapping::SetLightT(const TrfObjectInfo &obj, TrafficLight &traffic_light_t) {
-  std::vector<TrfObjectInfo> other_objs;
-
-  auto turn_types = GetTurnType(traffic_light_t.turn_type);
-  if (traffic_light_t.turn_type != TurnType::RIGHT_TURN) {
-    turn_types.emplace_back(TLS_CIRCULAR);
-  }
-  std::vector<uint64_t> vec_ids;
-
-  other_objs.emplace_back(obj);
-  vec_ids.emplace_back(obj.id);
-  for (const auto &obj_tmp : perception_traffic_lights_) {
-    if (obj.id == obj_tmp.id) {
-      continue;
-    }
-    if (obj_tmp.traffic_light_box_id != obj.traffic_light_box_id) {
-      continue;
-    }
-    if (obj_tmp.attributes.traffic_light_direction != TrafficLightDirectionType::TLD_BACK) {
-      continue;
-    }
-    if (std::find(turn_types.begin(), turn_types.end(), obj_tmp.attributes.traffic_light_shape) == turn_types.end()) {
-      continue;
-    }
-    vec_ids.emplace_back(obj_tmp.id);
-    other_objs.emplace_back(obj_tmp);
-  }
-  if (other_objs.size() > 1 && obj.track_status == TrackStatus::COASTED) {
-    std::sort(other_objs.begin(), other_objs.end(), [](const TrfObjectInfo &lhs, const TrfObjectInfo &rhs) {
-      auto GetPriority = [](TrackStatus status_t) {
-        switch (status_t) {
-          case TrackStatus::UPDATED:
-            return 0;
-          case TrackStatus::NEW:
-            return 1;
-          case TrackStatus::COASTED:
-            return 2;
-          case TrackStatus::INVALID:
-            return 3;
-          default:
-            return 4;
-        }
-      };
-      return GetPriority(lhs.track_status) < GetPriority(rhs.track_status);
-    });
-    LD_TRAFFIC_LOG << fmt::format("vec_ids:{}  front_obj:{} obj:{}", vec_ids, other_objs.front().id, obj.id);
-  }
-  auto obj_rev = other_objs.front();
-
-  LD_TRAFFIC_LOG << "set_final_obj_id:" << obj_rev.id;
-  traffic_light_t.is_valid                   = true;
-  traffic_light_t.traffic_light_flashing     = obj_rev.attributes.traffic_light_flashing;
-  traffic_light_t.traffic_light_num          = obj_rev.attributes.traffic_light_num;
-  traffic_light_t.color                      = obj_rev.attributes.traffic_light_color;  // IsFlashLight(obj_rev)
-  traffic_light_t.traffic_obj_info           = std::make_shared<TrfObjectInfo>(obj_rev);
-  traffic_light_t.yellow_flashing_start_time = obj_rev.yellow_flashing_start_time;
+  traffic_light_t.is_valid               = true;
+  traffic_light_t.traffic_light_flashing = obj.attributes.traffic_light_flashing;
+  traffic_light_t.traffic_light_num      = obj.attributes.traffic_light_num;
+  traffic_light_t.color                  = obj.attributes.traffic_light_color;
+  traffic_light_t.traffic_obj_info       = std::make_shared<TrfObjectInfo>(obj);
 
   if (perception_traffic_light_info_) {
     traffic_light_t.perception_seq_num = perception_traffic_light_info_->header.cycle_counter;
@@ -3443,27 +2391,12 @@ void TrafficLightMapping::FillPerceptionTrafficLights() {
       continue;
     }
 
-    bool is_arrow_straight =
-        std::find(straight_shapes_.begin(), straight_shapes_.end(), obj.attributes.traffic_light_shape) != straight_shapes_.end();
-    bool is_arrow_left  = std::find(left_shapes_.begin(), left_shapes_.end(), obj.attributes.traffic_light_shape) != left_shapes_.end();
-    bool is_arrow_right = std::find(right_shapes_.begin(), right_shapes_.end(), obj.attributes.traffic_light_shape) != right_shapes_.end();
-    bool is_arrow_uturn = std::find(uturn_shapes_.begin(), uturn_shapes_.end(), obj.attributes.traffic_light_shape) != uturn_shapes_.end();
-    if (is_arrow_straight || is_arrow_left || is_arrow_right || is_arrow_uturn) {
-      if ((obj.det_source == cem::message::sensor::MONO_FRONT_NARROW && obj.shape_conf < 0.7) ||
-          (obj.det_source == cem::message::sensor::MONO_FRONT_WIDE && obj.shape_conf < 0.5)) {
-        TRAFFIC_REC_LOG << fmt::format("invalid_need_remove_light obj_id:{} camera_source:{} shape_conf:{:.2f}", obj.id,
-                                       magic_enum::enum_name(obj.det_source), obj.shape_conf);
-        continue;
-      }
-    }
-
     TRAFFIC_REC_LOG << fmt::format(
         "normal_traffic_light_id:{}  position:[{:.2f},{:.2f},{:.2f}] shape:{}  color:{}  num:{} is_flash:{:d} direction:{} track_age:{} "
-        "direction_conf:{:.2f} shape_conf:{:.2f} det_source:{}",
+        "conf:{:.2f}",
         obj.id, obj.position.x, obj.position.y, obj.position.z, magic_enum::enum_name(obj.attributes.traffic_light_shape),
         magic_enum::enum_name(obj.attributes.traffic_light_color), obj.attributes.traffic_light_num, obj.attributes.traffic_light_flashing,
-        magic_enum::enum_name(obj.attributes.traffic_light_direction), obj.track_age, obj.direction_conf, obj.shape_conf,
-        magic_enum::enum_name(obj.det_source));
+        magic_enum::enum_name(obj.attributes.traffic_light_direction), obj.track_age, obj.direction_conf);
 
     perception_traffic_lights_.push_back(obj);
     perception_traffic_lights_.back().publish_time = perception_traffic_light_info_->header.timestamp;

@@ -72,12 +72,11 @@ struct SdSubPathInfo {
   std::shared_ptr<const SDSubPath>                  sub_path_{nullptr};
   std::vector<std::shared_ptr<const SDSectionInfo>> sd_sction_infos_;
 };
-inline std::optional<double> LD_AngleDiffBetweenSection(const cem::message::env_model::SectionInfo &lhs,
-                                                        const cem::message::env_model::SectionInfo &rhs, bool connected = true,
-                                                        bool normal_direction = true) {
+inline std::optional<double> LD_AngleDiffBetweenSection(const cem::message::env_model::SectionInfo &lhs, const cem::message::env_model::SectionInfo &rhs, bool connected = true,
+                                                     bool normal_direction = true) {
   const auto &point_ptr_current = lhs.points;
   const auto &point_ptr_next    = rhs.points;
-  if (point_ptr_current.size() < 2 || point_ptr_next.size() < 2) {
+  if ( point_ptr_current.size() < 2 ||  point_ptr_next.size() < 2) {
     return std::nullopt;
   }
   std::size_t size_lhs = lhs.points.size();
@@ -105,10 +104,12 @@ inline std::optional<double> LD_AngleDiffBetweenSection(const cem::message::env_
   Vec2d seg2_end{seg2_it_begin_next->x, seg2_it_begin_next->y};
 
   LineSegment2d line_segment_current{seg1_end_0, seg1_end_1};
-  if (!normal_direction) {
+    if(!normal_direction)
+  {
     LineSegment2d line_segment_current{seg1_start_0, seg1_start_1};
     LineSegment2d line_segment_next{seg2_start_0, seg2_start_1};
     return angleDifference(line_segment_current.heading(), line_segment_next.heading());
+
   }
   if (!connected) {
     LineSegment2d line_segment_next{seg2_start_0, seg2_start_1};
@@ -184,10 +185,12 @@ inline std::optional<double> AngleDiffBetweenSection(const SDSectionInfo &lhs, c
   //   return angleDifference(line_segment_current_reverse.heading(), line_segment_next.heading());
   // }
 
-  if (!not_Calculate_Uturn_Angle) {
+  if(!not_Calculate_Uturn_Angle)
+  {
     LineSegment2d line_segment_current{seg1_start_0, seg1_start_1};
     LineSegment2d line_segment_next{seg2_start_0, seg2_start_1};
     return angleDifference(line_segment_current.heading(), line_segment_next.heading());
+
   }
   LineSegment2d line_segment_current{seg1_end_0, seg1_end_1};
   if (!connected) {
@@ -233,7 +236,7 @@ class SDMapElementExtract {
     JunctionInfoCity junction_city_;
     bool             valid_{false};
   };
-  struct LDAngleJunction {
+struct LDAngleJunction {
     std::shared_ptr<const cem::message::env_model::SectionInfo> section{nullptr};
 
     double angle{0.0};
@@ -259,7 +262,7 @@ class SDMapElementExtract {
   };
 
   struct AngleJunction {
-    const SDSectionInfo *section{nullptr};
+    const SDSectionInfo* section{nullptr};
 
     double angle{0.0};
     double raw_angle{0.0};
@@ -292,10 +295,13 @@ class SDMapElementExtract {
   [[nodiscard]] bool SectionIsRightTurnDedicated(const SDSectionInfo &section_t);
 
   static void JunctionAngleSectionDirection(const SDSectionInfo &section, std::vector<AngleJunction> &res, bool normal_direction = true);
-  static void JunctionAngleLDSectionDirection(const cem::message::env_model::SectionInfo &section, std::vector<LDAngleJunction> &res,
-                                              bool normal_direction = true);
+  static void JunctionAngleLDSectionDirection(const cem::message::env_model::SectionInfo &section, std::vector<LDAngleJunction> &res, bool normal_direction = true);
 
-  [[nodiscard]] const std::map<double, RecommendLane> &GetSdRecommendLane() const { return map_recommend_lane_; }
+
+  [[nodiscard]] const std::map<double, RecommendLane> &GetSdRecommendLane()
+      const {
+    return map_recommend_lane_;
+  }
 
  private:
   void Reset();
@@ -307,14 +313,8 @@ class SDMapElementExtract {
   void SetSdRecommendLane();
 
   int GetSectionLaneNum(const std::vector<SDSectionInfo> &route_section, size_t idx, bool is_back = true) {
-    const auto &lane_group = LaneGroups(route_section[idx], is_back);
-    std::size_t target_num = lane_group.size();
-    for (auto lane_info : lane_group) {
-      if (lane_info.type == LaneType::LANE_NON_MOTOR || lane_info.type == LaneType::LANE_DIVERSION) {
-        target_num--;
-      }
-    }
-    target_num = target_num != 0 ? target_num : route_section[idx].lane_num;
+    std::size_t target_num = LaneGroups(route_section[idx], is_back).size();
+    target_num             = target_num != 0 ? target_num : route_section[idx].lane_num;
     return static_cast<int>(target_num);
   }
 
@@ -374,18 +374,19 @@ class SDMapElementExtract {
 
   static bool TempFilterSplit_01(const std::vector<AngleJunction> &succ_junction_angles);
   static bool TempFilterSplit_02(const std::vector<AngleJunction> &succ_junction_angles);
-  static bool TempFilterSplit_03(const std::vector<AngleJunction> &succ_junction_angles);
+  static bool TempFilterSplit_03(const std::vector<AngleJunction> &succ_junction_angles) ;
 
   // bool CheckIfUsedBefore();
 
   static void JudgeIsNeedMatchArrow(std::vector<JunctionInfoCity> &junctions_info);
-  void        JudgeTjunctionIsOnlyUturn(std::vector<JunctionInfoCity> &junctions_info, const std::vector<SDSectionInfo> &sd_route_sections);
+  void JudgeTjunctionIsOnlyUturn(std::vector<JunctionInfoCity> &junctions_info,const std::vector<SDSectionInfo>&sd_route_sections);
+
 
   std::shared_ptr<RoutingMap> routing_map_{nullptr};
 
-  std::unordered_map<uint64_t, const SDLaneGroupInfo *> map_sd_lane_groups_info_;
+  std::unordered_map<uint64_t, const SDLaneGroupInfo*>          map_sd_lane_groups_info_;
   //std::unordered_map<uint64_t, std::shared_ptr<const LaneInfo>>                 map_sd_lanes_info_;
-  std::unordered_map<uint64_t, const SDSectionInfo *> map_sd_sections_;
+  std::unordered_map<uint64_t,  const SDSectionInfo*>            map_sd_sections_;
   //std::unordered_map<uint64_t, SdSubPathInfo>                                   map_sd_subpaths_;
   std::unordered_map<uint64_t, std::vector<SDMapElementExtract::AngleJunction>> map_section_angles_;
 
@@ -397,7 +398,7 @@ class SDMapElementExtract {
 
   JunctionHelpInfo junction_help_;
 
-  std::vector<JunctionInfoCity>   junctions_info_;
+  std::vector<JunctionInfoCity> junctions_info_;
   std::map<double, RecommendLane> map_recommend_lane_;
 };
 }  // namespace cem::fusion::navigation

@@ -107,6 +107,7 @@ class CrossRoadConstruction {
   std::shared_ptr<byd::msg::orin::routing_map::EnvStatus> env_status_{};
   int last_dnp_status_{-1};
   bool noa2icc{false};
+  json is_right_turn_only_debug_ = json::object();
 };
 
 }  // namespace fusion

@@ -16,7 +16,6 @@ struct InternalParams {
   LDMapDataContainer      ld_map_data;
   NavigationInfoContainer navigation_info_data;
   BevLDMatchInfoContainer ld_match_info_data;
-  GeosMatchMergeInfoContainer geos_match_merge_data;
 };
 
 }  // namespace fusion

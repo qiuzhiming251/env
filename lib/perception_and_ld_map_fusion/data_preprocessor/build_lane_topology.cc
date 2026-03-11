@@ -3080,7 +3080,8 @@ void BuildLaneTopology::GetMapNewSegment(
 void BuildLaneTopology::BuildMergeTopo(
     BevMapInfoPtr local_map,
     std::shared_ptr<cem::message::env_model::RoutingMap> ld_map,
-    const bev_map_ids_info & bev_map_ids)
+    const bev_map_ids_info & bev_map_ids,
+    std::string& debug_infos)
 {
     if(nullptr == local_map)
     {
@@ -3546,7 +3547,7 @@ void BuildLaneTopology::BuildMergeTopo(
         store_merge_topo.need_to_build_topo = false;
         return;
     }
-    if(Judged_Result.remove_start_point(0) <= 10.0f && valid_count >= 3 && valid_count <= 5)
+    if(Judged_Result.remove_start_point(0) < 20.0f && valid_count >= 1 && valid_count <= 5)
     {//开始构建的第一和第二帧，判断分割点在车前20米后就不构建merge拓扑,以防止无法控车。
         store_merge_topo.need_to_build_topo = false;
         is_fade_away = 0;
@@ -3744,6 +3745,8 @@ void BuildLaneTopology::BuildMergeTopo(
                     bev_lane.next_lane_ids.push_back(new_lane_id);
                     bev_lane.is_build_merge = true;
                     bev_lane.is_build_merge_left = is_build_left_lane;
+                    std::string build_merge_debug = "[BuildMerge,mergeNewID#" + std::to_string(new_lane_id) + "] ";
+                    debug_infos += build_merge_debug;
                 }
             }
             store_merge_topo.need_to_build_topo = true;
@@ -3819,7 +3822,8 @@ void BuildLaneTopology::BuildMergeTopo(
 void BuildLaneTopology::BuildSplitTopoWithLdMap(
     BevMapInfoPtr local_map,
     std::shared_ptr<cem::message::env_model::RoutingMap> ld_map,
-    const bev_map_ids_info & bev_map_ids)
+    const bev_map_ids_info & bev_map_ids,
+    std::string& debug_infos)
 {
 
     if(nullptr == local_map || nullptr == ld_map)
@@ -4161,10 +4165,15 @@ void BuildLaneTopology::BuildSplitTopoWithLdMap(
                     local_map->lane_infos[split_index].connect_type = BevLaneConnectType::SPLIT;
                     local_map->lane_infos[split_index].is_build_split = true;
                 }
-                bev_lane.connect_type = BevLaneConnectType::NORMAL;
-                bev_lane.is_build_split = true;
-                bev_lane.is_build_split_left = is_split_at_left;
-                traffic_flow_store_merge_topo.need_to_build_topo = true;
+                if(main_index >= 0 || split_index >= 0)
+                {
+                    bev_lane.connect_type = BevLaneConnectType::NORMAL;
+                    bev_lane.is_build_split = true;
+                    bev_lane.is_build_split_left = is_split_at_left;
+                    std::string build_split_debug = "[BuildSplit,mainID#" + std::to_string(main_id) + ",splitID#" + std::to_string(split_id) + "] ";
+                    debug_infos += build_split_debug;
+                    traffic_flow_store_merge_topo.need_to_build_topo = true;
+                }
             }
         }
     }
@@ -4683,7 +4692,8 @@ void BuildLaneTopology::CheckMergeTopo(
     BevMapInfoPtr &bevMapPtr,
     RoutingMapPtr &routingMapPtr,
     std::unordered_map<uint64_t,
-    std::vector<uint64_t>>& bev_ld_match)
+    std::vector<uint64_t>>& bev_ld_match,
+    std::string& debug_infos)
 {
 
     if(bevMapPtr == nullptr || routingMapPtr == nullptr) {
@@ -4697,6 +4707,7 @@ void BuildLaneTopology::CheckMergeTopo(
         has_ld_map_flag = false;
     }
     // 根据对应的ld地图车道，校验感知自车道merge拓扑是否是误检拓扑
+    json topo_debug_info;
     static uint64_t ego_lane_id = 0;
     std::vector<BevLaneInfo>::iterator bev_ego_lane_iter = bevMapPtr->lane_infos.end();
     std::vector<BevLaneInfo>::iterator left_side_lane_iter = bevMapPtr->lane_infos.end();
@@ -4793,18 +4804,25 @@ void BuildLaneTopology::CheckMergeTopo(
             else{
                 bev_ld_ego_dist = LaneGeometry::CalLinesSimilar(*bev_ego_lane_iter->geos,*ld_ego_tmp_geos);
                 if(bev_ld_ego_dist > 1.0) {
+                    topo_debug_info["merge ego dist:"] = bev_ld_ego_dist;
+                    debug_infos += topo_debug_info.dump();
                     return;
                 }
             }
             if(ld_ego_lane_iter->merge_topology == cem::message::env_model::MergeTopology::TOPOLOGY_MERGE_NONE) {//地图自车道无merge拓扑
+                    topo_debug_info["ld merge:"] = false;
+                    debug_infos += topo_debug_info.dump();
                     bev_ld_next_dist = LaneGeometry::CalLinesSimilar(*next_lane_ptr->geos, *ld_ego_tmp_geos);
                     if(fabs(bev_ld_next_dist - bev_ld_ego_dist) > 2.5 && !JudgeEgoMergeByLaneDist(5.0)) {
+                        topo_debug_info["ego next dist diff:"] = fabs(bev_ld_next_dist - bev_ld_ego_dist);
+                        debug_infos += topo_debug_info.dump();
                         final_ego_merge_invalid = true;
                     }
             }
             else if(ld_ego_lane_iter->merge_topology == cem::message::env_model::MergeTopology::TOPOLOGY_MERGE_LEFT ||
                 ld_ego_lane_iter->merge_topology == cem::message::env_model::MergeTopology::TOPOLOGY_MERGE_RIGHT) {//校验感知是否跨车道汇入
-
+                topo_debug_info["ld merge:"] = true;
+                debug_infos += topo_debug_info.dump();
                 auto ld_main_lane_iter = std::find_if(routingMapPtr->lanes.begin(), routingMapPtr->lanes.end(),
                                                 [&](const cem::message::env_model::LaneInfo &lane) { return ld_ego_lane_iter->next_lane_ids.size() == 1 &&  ld_ego_lane_iter->next_lane_ids[0] == lane.id
                                                 && lane.merge_topology == cem::message::env_model::MergeTopology::TOPOLOGY_MERGE_NONE; });
@@ -4838,6 +4856,9 @@ void BuildLaneTopology::CheckMergeTopo(
                                                     next_lane_ptr->previous_lane_ids.end());
             bev_ego_lane_iter->next_lane_ids.erase(std::remove(bev_ego_lane_iter->next_lane_ids.begin(),bev_ego_lane_iter->next_lane_ids.end(),
                                                     next_lane_ptr->id),bev_ego_lane_iter->next_lane_ids.end());
+            topo_debug_info["merge valid:"] = false;
+            topo_debug_info["del merge next id:"] = next_lane_ptr->id;
+            debug_infos += topo_debug_info.dump();
             //寻找左右车道线
             GetLaneMarkerBasedPosition(bev_ego_lane_iter->id,left_side_lane_iter,right_side_lane_iter,bevMapPtr,lmk_geos);
             if(lmk_geos[0].first && lmk_geos[1].first) {
@@ -4888,29 +4909,31 @@ void BuildLaneTopology::CheckMergeTopo(
             if(exit_correct_next_lane_flag) {
                 bev_ego_lane_iter->next_lane_ids.push_back(correct_next_lane_iter->id);
                 correct_next_lane_iter->previous_lane_ids.push_back(bev_ego_lane_iter->id);
+                topo_debug_info["add merge next id:"] = correct_next_lane_iter->id;
+                debug_infos += topo_debug_info.dump();
                 return;
             }
             else{
                 //找不到合理的后继中心线，需要利用找到的左右车道线，对自车道中心线做延长处理
-                Eigen::Vector2f target_lane_last_pts(0.0,0.0);
-                Eigen::Vector2f target_left_last_pts(0.0,0.0);
-                Eigen::Vector2f target_right_last_pts(0.0,0.0);
-                if(bev_ego_lane_iter->geos->size() > 0) {
-                    target_lane_last_pts = bev_ego_lane_iter->geos->back();
-                    for(size_t idx = 0; idx < bevMapPtr->lanemarkers.size(); idx++)
-                    {
-                        auto &bev_lm = bevMapPtr->lanemarkers[idx];
-                        if(lmk_geos[0].first && bev_lm.id == lmk_geos[0].first)
-                        {
-                            target_left_last_pts = bev_lm.geos->back();
-                        }
-                        else if(lmk_geos[1].first && bev_lm.id == lmk_geos[1].first)
-                        {
-                            target_right_last_pts = bev_lm.geos->back();
-                        }
-                    }
-                    AlignLaneMarker(bevMapPtr,bev_ego_lane_iter->id,lmk_geos[0].first,lmk_geos[1].first,target_lane_last_pts,target_left_last_pts,target_right_last_pts);
-                }
+                // Eigen::Vector2f target_lane_last_pts(0.0,0.0);
+                // Eigen::Vector2f target_left_last_pts(0.0,0.0);
+                // Eigen::Vector2f target_right_last_pts(0.0,0.0);
+                // if(bev_ego_lane_iter->geos->size() > 0) {
+                //     target_lane_last_pts = bev_ego_lane_iter->geos->back();
+                //     for(size_t idx = 0; idx < bevMapPtr->lanemarkers.size(); idx++)
+                //     {
+                //         auto &bev_lm = bevMapPtr->lanemarkers[idx];
+                //         if(lmk_geos[0].first && bev_lm.id == lmk_geos[0].first)
+                //         {
+                //             target_left_last_pts = bev_lm.geos->back();
+                //         }
+                //         else if(lmk_geos[1].first && bev_lm.id == lmk_geos[1].first)
+                //         {
+                //             target_right_last_pts = bev_lm.geos->back();
+                //         }
+                //     }
+                //     AlignLaneMarker(bevMapPtr,bev_ego_lane_iter->id,lmk_geos[0].first,lmk_geos[1].first,target_lane_last_pts,target_left_last_pts,target_right_last_pts);
+                // }
             }
         }
     }
@@ -5216,7 +5239,7 @@ void BuildLaneTopology::AlignLaneMarker(
                 const bool removed_invalid = false;
                 FitRawCurveLineWithCoeffs(bev_lm.line_points,removed_invalid,fit_curves,bev_seg_groups);
                 // AINFO<<"fit_curves size:"<<fit_curves.size()<<" bev_seg_groups size:"<<bev_seg_groups.size();
-                for(int pt_idx = 0; pt_idx < base_points.size();pt_idx)
+                for(int pt_idx = 0; pt_idx < base_points.size();pt_idx++)
                 {
                     auto &pt = base_points[pt_idx];
                     for(int seg_idx = 0; seg_idx < bev_seg_groups.size(),seg_idx < fit_curves.size(); seg_idx++)
@@ -5292,7 +5315,7 @@ void BuildLaneTopology::AlignLaneMarker(
                 const bool removed_invalid = false;
                 FitRawCurveLineWithCoeffs(bev_lm.line_points,removed_invalid,fit_curves,bev_seg_groups);
                 // AINFO<<"fit_curves size:"<<fit_curves.size()<<" bev_seg_groups size:"<<bev_seg_groups.size();
-                for(int pt_idx = 0; pt_idx < base_points.size();pt_idx)
+                for(int pt_idx = 0; pt_idx < base_points.size();pt_idx++)
                 {
                     auto &pt = base_points[pt_idx];
                     for(int seg_idx = 0; seg_idx < bev_seg_groups.size(),seg_idx < fit_curves.size(); seg_idx++)
@@ -5368,7 +5391,7 @@ void BuildLaneTopology::AlignLaneMarker(
                 const bool removed_invalid = false;
                 FitRawCurveLineWithCoeffs(bev_lm.line_points,removed_invalid,fit_curves,bev_seg_groups);
                 // AINFO<<"fit_curves size:"<<fit_curves.size()<<" bev_seg_groups size:"<<bev_seg_groups.size();
-                for(int pt_idx = 0; pt_idx < base_points.size();pt_idx)
+                for(int pt_idx = 0; pt_idx < base_points.size();pt_idx++)
                 {
                     auto &pt = base_points[pt_idx];
                     for(int seg_idx = 0; seg_idx < bev_seg_groups.size(),seg_idx < fit_curves.size(); seg_idx++)
@@ -5418,151 +5441,101 @@ void BuildLaneTopology::AlignLaneMarker(
 }
 
 //校验自车道 误检split拓扑
-void BuildLaneTopology::CheckSplitTopo(BevMapInfoPtr &bevMapPtr,RoutingMapPtr &routingMapPtr,const bev_map_ids_info &bev_map_ids)
+void BuildLaneTopology::CheckSplitTopo(BevMapInfoPtr &bevMapPtr,RoutingMapPtr &routingMapPtr,const bev_map_ids_info &bev_map_ids, std::string& debug_infos)
 {
-    bool has_ld_map = true;
     if(!bevMapPtr || bevMapPtr->lane_infos.empty())
     {
         return;
     }
     auto bev_ego_lane_iter = std::find_if(bevMapPtr->lane_infos.begin(), bevMapPtr->lane_infos.end(),
                                             [&](const cem::message::sensor::BevLaneInfo &lane) { return (static_cast<uint32_t>(BevLanePosition::LANE_LOC_EGO) == lane.position) && (lane.next_lane_ids.size() == 2); });
-    if(bev_ego_lane_iter == bevMapPtr->lane_infos.end() || bev_ego_lane_iter->geos->size() < 3) {
+    if(bev_ego_lane_iter == bevMapPtr->lane_infos.end())
+    {
         return;
     }
-    if(!routingMapPtr || routingMapPtr->lanes.empty()) {
-        has_ld_map = false;
+    for(auto& split_info : bev_map_ids.ldmap_split_info) {
+        if(split_info.bev_lane_from == bev_ego_lane_iter->id && (split_info.match_type == LdMapProcessor::MergeSplitType::kSplitLeft || split_info.match_type == LdMapProcessor::MergeSplitType::kSplitRight)) {
+            return;
+        }
     }
-    //有图split拓扑校验
-    if(has_ld_map) {
-            for(auto& split_info : bev_map_ids.ldmap_split_info) {
-                if(split_info.bev_lane_from == bev_ego_lane_iter->id && (split_info.match_type == LdMapProcessor::MergeSplitType::kSplitLeft || split_info.match_type == LdMapProcessor::MergeSplitType::kSplitRight)) {
-                    return;
-                }
-            }
-            // AINFO<<"ego id:"<<bev_ego_lane_iter->id<<" split err";
-            //感知误检split拓扑,需要删除错误的拓扑关系
-            vector<uint64_t> bev_split_ids(bev_ego_lane_iter->next_lane_ids);
-            std::shared_ptr<std::vector<Eigen::Vector2f>> ld_ego_geos = std::make_shared<std::vector<Eigen::Vector2f>>();
-            std::unordered_map<uint64_t, std::unordered_set<uint64_t>> bev_split_matched_lds_set;
-            std::unordered_map<uint64_t,uint64_t> bev_split_main_cnt;
-            for(auto split_id : bev_split_ids) {
-                bev_split_main_cnt.insert({split_id, 0});
-                if(bev_map_ids.local_map_matched_ids.find(split_id) != bev_map_ids.local_map_matched_ids.end()) {
-                    auto match_lds = bev_map_ids.local_map_matched_ids.at(split_id);
-                    bev_split_matched_lds_set.insert({split_id, std::unordered_set<uint64_t>()});
-                    for(auto ld_id : match_lds) {
-                            bev_split_matched_lds_set[split_id].insert(ld_id);
-                    }
-                }
-            }
-            if(bev_map_ids.local_map_matched_ids.find(bev_ego_lane_iter->id) != bev_map_ids.local_map_matched_ids.end() && !bev_map_ids.local_map_matched_ids.at(bev_ego_lane_iter->id).empty()) {
-                auto ld_id = bev_map_ids.local_map_matched_ids.at(bev_ego_lane_iter->id).front();
-                auto ld_lane_it = std::find_if(routingMapPtr->lanes.begin(), routingMapPtr->lanes.end(),
-                                                            [&](const cem::message::env_model::LaneInfo &lane) { return ld_id == lane.id; });
-                while(ld_lane_it != routingMapPtr->lanes.end()) {
-                    for(auto split_id : bev_split_ids) {
-                        if(bev_split_matched_lds_set[split_id].find(ld_lane_it->id) != bev_split_matched_lds_set[split_id].end()) {
-                            bev_split_main_cnt[split_id] += 1;
-                        }
-                    }
-                    for(auto &pt : ld_lane_it->points) {
-                            if(!ld_ego_geos->empty() && ld_ego_geos->back().x() >= pt.x) {
-                                continue;
-                            }
-                            ld_ego_geos->push_back(Eigen::Vector2f(pt.x,pt.y));
-                    }
-                    if(ld_lane_it->next_lane_ids.size() == 1) {
-                        ld_lane_it = std::find_if(routingMapPtr->lanes.begin(), routingMapPtr->lanes.end(),
-                                                            [&](const cem::message::env_model::LaneInfo &lane) { return ld_lane_it->next_lane_ids[0] == lane.id; });
-                    }
-                    else {
-                            break;
-                    }
-                }
-            }
-            if(bev_ego_lane_iter->geos->size() >= 3 && ld_ego_geos->size() >= 3 && LaneGeometry::CalLinesSimilar(*bev_ego_lane_iter->geos, *ld_ego_geos) < 1.5) {
-                auto bev_split_lane_iter0 = std::find_if(bevMapPtr->lane_infos.begin(), bevMapPtr->lane_infos.end(),
-                                                    [&](const cem::message::sensor::BevLaneInfo &lane) { return bev_split_ids[0] == lane.id && lane.geos->size() >= 3;});
-                auto bev_split_lane_iter1 = std::find_if(bevMapPtr->lane_infos.begin(), bevMapPtr->lane_infos.end(),
-                                                    [&](const cem::message::sensor::BevLaneInfo &lane) { return bev_split_ids[1] == lane.id  && lane.geos->size() >= 3;});
-                if(bev_split_lane_iter0 == bevMapPtr->lane_infos.end() || bev_split_lane_iter1 == bevMapPtr->lane_infos.end()) {
-                    return;
-                }
-                double split_2_ld_ego_dist_0 = LaneGeometry::CalLinesSimilar(*bev_split_lane_iter0->geos, *ld_ego_geos);
-                double split_2_ld_ego_dist_1 = LaneGeometry::CalLinesSimilar(*bev_split_lane_iter1->geos, *ld_ego_geos);
-                if(bev_split_main_cnt[bev_split_ids[0]] < bev_split_main_cnt[bev_split_ids[1]] && split_2_ld_ego_dist_0 > split_2_ld_ego_dist_1) {
-                    bev_ego_lane_iter->next_lane_ids.erase(remove(bev_ego_lane_iter->next_lane_ids.begin(),bev_ego_lane_iter->next_lane_ids.end(), bev_split_ids[0]), bev_ego_lane_iter->next_lane_ids.end());
-                    bev_split_lane_iter0->previous_lane_ids.erase(remove(bev_split_lane_iter0->previous_lane_ids.begin(), bev_split_lane_iter0->previous_lane_ids.end(), bev_ego_lane_iter->id), bev_split_lane_iter0->previous_lane_ids.end());
-                    // AINFO<<"erase split topo ego lane id:"<<bev_ego_lane_iter->id<<" split id:"<<bev_split_lane_iter0->id;
-                }
-                else if(bev_split_main_cnt[bev_split_ids[0]] > bev_split_main_cnt[bev_split_ids[1]] && split_2_ld_ego_dist_0 < split_2_ld_ego_dist_1) {
-                    bev_ego_lane_iter->next_lane_ids.erase(remove(bev_ego_lane_iter->next_lane_ids.begin(), bev_ego_lane_iter->next_lane_ids.end(), bev_split_ids[1]), bev_ego_lane_iter->next_lane_ids.end());
-                    bev_split_lane_iter1->previous_lane_ids.erase(remove(bev_split_lane_iter1->previous_lane_ids.begin(), bev_split_lane_iter1->previous_lane_ids.end(), bev_ego_lane_iter->id), bev_split_lane_iter1->previous_lane_ids.end());
-                    // AINFO<<"erase split topo ego lane id:"<<bev_ego_lane_iter->id<<" split id:"<<bev_split_lane_iter1->id;
-                }
-            }
-            else {
-                return;
-            }
+    // AINFO<<"ego id:"<<bev_ego_lane_iter->id<<" split err";
+    //感知误检split拓扑,需要删除错误的拓扑关系
+    json topo_debug_info;
+    topo_debug_info["ego id:"] = bev_ego_lane_iter->id;
+    topo_debug_info["split vaild:"] = false;
+    vector<uint64_t> bev_split_ids(bev_ego_lane_iter->next_lane_ids);
+    std::shared_ptr<std::vector<Eigen::Vector2f>> ld_ego_geos = std::make_shared<std::vector<Eigen::Vector2f>>();
+    std::unordered_map<uint64_t, std::unordered_set<uint64_t>> bev_split_matched_lds_set;
+    std::unordered_map<uint64_t,uint64_t> bev_split_main_cnt;
+    for(auto split_id : bev_split_ids) {
+       bev_split_main_cnt.insert({split_id, 0});
+       if(bev_map_ids.local_map_matched_ids.find(split_id) != bev_map_ids.local_map_matched_ids.end()) {
+          auto match_lds = bev_map_ids.local_map_matched_ids.at(split_id);
+          bev_split_matched_lds_set.insert({split_id, std::unordered_set<uint64_t>()});
+          for(auto ld_id : match_lds) {
+                bev_split_matched_lds_set[split_id].insert(ld_id);
+          }
+       }
     }
-    else {//无图拓扑校验：CNOAC2-146645
-          auto left_first_lane_iter = std::find_if(bevMapPtr->lane_infos.begin(), bevMapPtr->lane_infos.end(),
-                                            [&](const cem::message::sensor::BevLaneInfo &lane) { return (static_cast<uint32_t>(BevLanePosition::LANE_LOC_LEFT_FIRST) == lane.position) && lane.next_lane_ids.empty(); });
-          auto right_first_lane_iter = std::find_if(bevMapPtr->lane_infos.begin(), bevMapPtr->lane_infos.end(),
-                                            [&](const cem::message::sensor::BevLaneInfo &lane) { return (static_cast<uint32_t>(BevLanePosition::LANE_LOC_RIGHT_FIRST) == lane.position) && lane.next_lane_ids.empty(); });
-          if(left_first_lane_iter == bevMapPtr->lane_infos.end() || right_first_lane_iter == bevMapPtr->lane_infos.end()) {
-              return;
-          }
-          double ego_2_left_dist = std::numeric_limits<double>::max();
-          double ego_2_right_dist = std::numeric_limits<double>::max();
-          if(left_first_lane_iter->geos->size() > 3 && right_first_lane_iter->geos->size() > 3) {
-            ego_2_left_dist = LaneGeometry::GetDistanceBetweenLines(*bev_ego_lane_iter->geos, *left_first_lane_iter->geos);
-            ego_2_right_dist = LaneGeometry::GetDistanceBetweenLines(*bev_ego_lane_iter->geos, *right_first_lane_iter->geos);
-            if(ego_2_left_dist > 3.0 &&  ego_2_left_dist < 5.0 && ego_2_right_dist > 3.0 &&  ego_2_right_dist < 5.0) {
-                auto bev_split_lane_iter0 = std::find_if(bevMapPtr->lane_infos.begin(), bevMapPtr->lane_infos.end(),
-                                                    [&](const cem::message::sensor::BevLaneInfo &lane) { return bev_ego_lane_iter->next_lane_ids[0] == lane.id && lane.geos->size() >= 3;});
-                auto bev_split_lane_iter1 = std::find_if(bevMapPtr->lane_infos.begin(), bevMapPtr->lane_infos.end(),
-                                                    [&](const cem::message::sensor::BevLaneInfo &lane) { return bev_ego_lane_iter->next_lane_ids[1] == lane.id && lane.geos->size() >= 3;});
-                if(bev_split_lane_iter0 == bevMapPtr->lane_infos.end() || bev_split_lane_iter1 == bevMapPtr->lane_infos.end()) {
-                    return;
-                }
-                if(LaneGeometry::JudgeIsLeft(*bev_split_lane_iter0->geos, *bev_split_lane_iter1->geos)) {
-                   double split0_2_left_dist = LaneGeometry::GetDistanceBetweenLines(*bev_split_lane_iter0->geos, *left_first_lane_iter->geos);
-                   double split1_2_right_dist = LaneGeometry::GetDistanceBetweenLines(*bev_split_lane_iter1->geos, *right_first_lane_iter->geos);
-                   if(split0_2_left_dist < 2.0 && split1_2_right_dist > 3.5 && split1_2_right_dist < 5.0) {
-                        bev_ego_lane_iter->next_lane_ids.erase(remove(bev_ego_lane_iter->next_lane_ids.begin(),bev_ego_lane_iter->next_lane_ids.end(), bev_split_lane_iter0->id), bev_ego_lane_iter->next_lane_ids.end());
-                        bev_split_lane_iter0->previous_lane_ids.erase(remove(bev_split_lane_iter0->previous_lane_ids.begin(), bev_split_lane_iter0->previous_lane_ids.end(), bev_ego_lane_iter->id), bev_split_lane_iter0->previous_lane_ids.end());
-                        // AINFO<<"erase split topo ego lane id:"<<bev_ego_lane_iter->id<<" split id:"<<bev_split_lane_iter0->id;
-                   }
-                   else if(split1_2_right_dist < 2.0 && split0_2_left_dist > 3.0 && split0_2_left_dist < 5.0) {
-                        bev_ego_lane_iter->next_lane_ids.erase(remove(bev_ego_lane_iter->next_lane_ids.begin(), bev_ego_lane_iter->next_lane_ids.end(), bev_split_lane_iter1->id), bev_ego_lane_iter->next_lane_ids.end());
-                        bev_split_lane_iter1->previous_lane_ids.erase(remove(bev_split_lane_iter1->previous_lane_ids.begin(), bev_split_lane_iter1->previous_lane_ids.end(), bev_ego_lane_iter->id), bev_split_lane_iter1->previous_lane_ids.end());
-                        // AINFO<<"erase split topo ego lane id:"<<bev_ego_lane_iter->id<<" split id:"<<bev_split_lane_iter1->id;
-                   }
-                }
-                else{
-                        double split0_2_right_dist = LaneGeometry::GetDistanceBetweenLines(*bev_split_lane_iter0->geos, *right_first_lane_iter->geos);
-                        double split1_2_left_dist = LaneGeometry::GetDistanceBetweenLines(*bev_split_lane_iter1->geos, *left_first_lane_iter->geos);
-                        if(split0_2_right_dist < 2.0 && split1_2_left_dist > 3.5 && split1_2_left_dist < 5.0) {
-                            bev_ego_lane_iter->next_lane_ids.erase(remove(bev_ego_lane_iter->next_lane_ids.begin(),bev_ego_lane_iter->next_lane_ids.end(), bev_split_lane_iter0->id), bev_ego_lane_iter->next_lane_ids.end());
-                            bev_split_lane_iter0->previous_lane_ids.erase(remove(bev_split_lane_iter0->previous_lane_ids.begin(), bev_split_lane_iter0->previous_lane_ids.end(), bev_ego_lane_iter->id), bev_split_lane_iter0->previous_lane_ids.end());
-                            // AINFO<<"erase split topo ego lane id:"<<bev_ego_lane_iter->id<<" split id:"<<bev_split_lane_iter0->id;
-                        }
-                        else if(split1_2_left_dist < 2.0 && split0_2_right_dist > 3.5 && split0_2_right_dist < 5.0) {
-                            bev_ego_lane_iter->next_lane_ids.erase(remove(bev_ego_lane_iter->next_lane_ids.begin(), bev_ego_lane_iter->next_lane_ids.end(), bev_split_lane_iter1->id), bev_ego_lane_iter->next_lane_ids.end());
-                            bev_split_lane_iter1->previous_lane_ids.erase(remove(bev_split_lane_iter1->previous_lane_ids.begin(), bev_split_lane_iter1->previous_lane_ids.end(), bev_ego_lane_iter->id), bev_split_lane_iter1->previous_lane_ids.end());
-                            // AINFO<<"erase split topo ego lane id:"<<bev_ego_lane_iter->id<<" split id:"<<bev_split_lane_iter1->id;
-                        }
-                }
+    if(bev_map_ids.local_map_matched_ids.find(bev_ego_lane_iter->id) != bev_map_ids.local_map_matched_ids.end() && !bev_map_ids.local_map_matched_ids.at(bev_ego_lane_iter->id).empty()) {
+       auto ld_id = bev_map_ids.local_map_matched_ids.at(bev_ego_lane_iter->id).front();
+       auto ld_lane_it = std::find_if(routingMapPtr->lanes.begin(), routingMapPtr->lanes.end(),
+                                                [&](const cem::message::env_model::LaneInfo &lane) { return ld_id == lane.id; });
+       while(ld_lane_it != routingMapPtr->lanes.end()) {
+            if(ld_lane_it->next_lane_ids.size() == 2) {
+               return;
             }
-            else{
-                 return;
-            }
-          }
-          else {
-              return;
-          }
+           for(auto split_id : bev_split_ids) {
+              if(bev_split_matched_lds_set[split_id].find(ld_lane_it->id) != bev_split_matched_lds_set[split_id].end()) {
+                 bev_split_main_cnt[split_id] += 1;
+              }
+           }
+           for(auto &pt : ld_lane_it->points) {
+                if(!ld_ego_geos->empty() && ld_ego_geos->back().x() >= pt.x) {
+                    continue;
+                }
+                ld_ego_geos->push_back(Eigen::Vector2f(pt.x,pt.y));
+           }
+           if(ld_lane_it->next_lane_ids.size() == 1) {
+              ld_lane_it = std::find_if(routingMapPtr->lanes.begin(), routingMapPtr->lanes.end(),
+                                                [&](const cem::message::env_model::LaneInfo &lane) { return ld_lane_it->next_lane_ids[0] == lane.id; });
+           }
+           else {
+                break;
+           }
+       }
+    }
+    if(bev_ego_lane_iter->geos->size() >= 3 && ld_ego_geos->size() >= 3 && LaneGeometry::CalLinesSimilar(*bev_ego_lane_iter->geos, *ld_ego_geos) < 1.5) {
+        auto bev_split_lane_iter0 = std::find_if(bevMapPtr->lane_infos.begin(), bevMapPtr->lane_infos.end(),
+                                            [&](const cem::message::sensor::BevLaneInfo &lane) { return bev_split_ids[0] == lane.id && lane.geos->size() >= 3;});
+        auto bev_split_lane_iter1 = std::find_if(bevMapPtr->lane_infos.begin(), bevMapPtr->lane_infos.end(),
+                                            [&](const cem::message::sensor::BevLaneInfo &lane) { return bev_split_ids[1] == lane.id  && lane.geos->size() >= 3;});
+        if(bev_split_lane_iter0 == bevMapPtr->lane_infos.end() || bev_split_lane_iter1 == bevMapPtr->lane_infos.end())
+        {
+            return;
+        }
+        double split_2_ld_ego_dist_0 = LaneGeometry::CalLinesSimilar(*bev_split_lane_iter0->geos, *ld_ego_geos);
+        double split_2_ld_ego_dist_1 = LaneGeometry::CalLinesSimilar(*bev_split_lane_iter1->geos, *ld_ego_geos);
+        if(bev_split_main_cnt[bev_split_ids[0]] < bev_split_main_cnt[bev_split_ids[1]] && split_2_ld_ego_dist_0 > split_2_ld_ego_dist_1) {
+            bev_ego_lane_iter->next_lane_ids.erase(remove(bev_ego_lane_iter->next_lane_ids.begin(),bev_ego_lane_iter->next_lane_ids.end(), bev_split_ids[0]), bev_ego_lane_iter->next_lane_ids.end());
+            bev_split_lane_iter0->previous_lane_ids.erase(remove(bev_split_lane_iter0->previous_lane_ids.begin(), bev_split_lane_iter0->previous_lane_ids.end(), bev_ego_lane_iter->id), bev_split_lane_iter0->previous_lane_ids.end());
+            // AINFO<<"erase split topo ego lane id:"<<bev_ego_lane_iter->id<<" split id:"<<bev_split_lane_iter0->id;
+            topo_debug_info["del next id:"] = bev_split_lane_iter0->id;
+            debug_infos += topo_debug_info.dump();
+        }
+        else if(bev_split_main_cnt[bev_split_ids[0]] > bev_split_main_cnt[bev_split_ids[1]] && split_2_ld_ego_dist_0 < split_2_ld_ego_dist_1) {
+            bev_ego_lane_iter->next_lane_ids.erase(remove(bev_ego_lane_iter->next_lane_ids.begin(), bev_ego_lane_iter->next_lane_ids.end(), bev_split_ids[1]), bev_ego_lane_iter->next_lane_ids.end());
+            bev_split_lane_iter1->previous_lane_ids.erase(remove(bev_split_lane_iter1->previous_lane_ids.begin(), bev_split_lane_iter1->previous_lane_ids.end(), bev_ego_lane_iter->id), bev_split_lane_iter1->previous_lane_ids.end());
+            // AINFO<<"erase split topo ego lane id:"<<bev_ego_lane_iter->id<<" split id:"<<bev_split_lane_iter1->id;
+            topo_debug_info["del next id:"] = bev_split_lane_iter1->id;
+            debug_infos += topo_debug_info.dump();
+        }
+    }
+    else {
+         topo_debug_info["ego size:"] = bev_ego_lane_iter->geos->size();
+         topo_debug_info["dist:"] = LaneGeometry::CalLinesSimilar(*bev_ego_lane_iter->geos, *ld_ego_geos);
+         debug_infos += topo_debug_info.dump();
+         return;
     }
 }
 bool BuildLaneTopology::CheckMatchRes(BevMapInfoPtr &bevMapPtr,RoutingMapPtr &routingMapPtr,std::unordered_map<uint64_t, std::vector<uint64_t>>& bev_ld_match)
@@ -5682,7 +5655,8 @@ bool BuildLaneTopology::isLDMapLowPrecision()
 void BuildLaneTopology::BuildNewMergeSplitTopo(
     BevMapInfoPtr local_map,
     std::shared_ptr<cem::message::env_model::RoutingMap> ld_map,
-    const bev_map_ids_info & bev_map_ids)
+    const bev_map_ids_info & bev_map_ids,
+    std::string& debug_infos)
 {
 
     isICCmode();
@@ -5699,14 +5673,14 @@ void BuildLaneTopology::BuildNewMergeSplitTopo(
      */
     if(true == valid_road_class && false == isInToll)
     {
-        BuildMergeTopo(local_map,ld_map,bev_map_ids);
+        BuildMergeTopo(local_map,ld_map,bev_map_ids,debug_infos);
     }
     /*1. 地图低精不需要构建split拓扑;
      *2. 靠近收费站不构建split拓扑;
      */
     if(nullptr != ld_map && false == isLowPrecision && false == isInToll)
     {
-        BuildSplitTopoWithLdMap(local_map,ld_map,bev_map_ids);
+        BuildSplitTopoWithLdMap(local_map,ld_map,bev_map_ids,debug_infos);
     }
     std::unordered_map<uint64_t, std::vector<uint64_t>> bev_ld_match;
     for(auto& match : bev_map_ids.local_map_matched_ids) {
@@ -5716,8 +5690,8 @@ void BuildLaneTopology::BuildNewMergeSplitTopo(
       }
       bev_ld_match.insert({match.first,ld_map_ids});
     }
-    CheckMergeTopo(local_map,ld_map,bev_ld_match);
-    CheckSplitTopo(local_map,ld_map,bev_map_ids);
+    CheckMergeTopo(local_map,ld_map,bev_ld_match,debug_infos);
+    CheckSplitTopo(local_map,ld_map,bev_map_ids,debug_infos);
     return;
 }
 }

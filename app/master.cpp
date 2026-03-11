@@ -13,10 +13,12 @@
 #include "fmt/core.h"
 #include "lib/sd_navigation/SDMapElementExtract.h"
 #include "lib/common/function_timer.h"
+#include "lib/pre_processor/data_manager/data_manager.h"
 #include "message/env_model/routing_map/routing_map.h"
 #include "message/env_model/occ/occ.h"
 #include "message/env_model/navigation/navigation.h"
 #include "message/sensor/camera/bev_lane/bev_lane.h"
+#include "message/state/top_state.h"
 #include "cyber/event/trace.h"
 #include "cyber/time/time.h"
 #include "modules/perception/env/src/lib/base/localmap_conf.h"
@@ -62,7 +64,9 @@ void Master::InitMember() {
   stopline_mapping_.reset(new StoplineMapping);
   routing_map_stopline_processor_.reset(new RoutingMapStopLineProcessor);
   crosswalk_mapping_.reset(new CrossWalkTracker);
+  stopline_mapping_e2e_.reset(new e2e::StoplineMapping);
   traffic_light_mapping_.reset(new TrafficLightMapping);
+  traffic_light_mapping_e2e_.reset(new e2e::TrafficLightMapping);
   fusion_manager_.reset(new FusionManager());
   fusion_manager_->Init();
   lane_guidance_.reset(new LaneGuidance);
@@ -84,6 +88,32 @@ void Master::InitMember() {
 
 // #define MapLessFlag
 void Master::Proc() {
+  TopStatePtr top_state_ptr{nullptr};
+  SensorDataManager::Instance()->GetLatestSensorFrame(top_state_ptr);
+  if (top_state_ptr) {
+    if (top_state_ptr->state_type == StateType::OTHER) {
+      return;
+    }
+  }
+  RoutingMapPtr routing_map_raw{nullptr};
+  SensorDataManager::Instance()->GetLatestSensorFrame(routing_map_raw);
+
+  BevMapInfoPtr bev_body{nullptr};
+  BevMapInfoPtr bev_dr{nullptr};
+  SensorDataManager::Instance()->GetLatestSensorFrame(bev_dr);
+  bev_body = DataManager::BevMapWorld2Body(bev_dr);
+
+  stopline_mapping_e2e_->Process(bev_body);
+  const auto &bev_stopline_objs_e2e = stopline_mapping_e2e_->GetStopLines();
+
+  // if (top_state_ptr) {
+  //   if (top_state_ptr->odd_type == OddType::CITYWAY_MODE) {
+  //     traffic_light_mapping_e2e_->Process(routing_map_raw, nullptr, bev_body, bev_stopline_objs_e2e);
+  //     messenger_->PulishTrafficLightE2E(traffic_light_mapping_e2e_->GetTrafficLightsE2E());
+  //     return;
+  //   }
+  // }
+
   FunctionTimer::measureTime("fusion_manager_", [&]() {fusion_manager_->Process();});
 
   fusion_manager_->SetCrossRoadInfo(cross_road_construction_->IsCrossRoad(), cross_road_construction_->CrossRoadDis(),
@@ -95,18 +125,16 @@ void Master::Proc() {
       fusion_manager_->GetTraverseCrossWalkLaneInfo());
   FunctionTimer::measureTime("pre_processor_", [&]() {pre_processor_->Process(bev_map_aligned, ld_map_aligned);});
 
-  RoutingMapPtr routing_map_raw{nullptr};
-  SensorDataManager::Instance()->GetLatestSensorFrame(routing_map_raw);
   auto raw_bev_map_ptr = INTERNAL_PARAMS.raw_bev_data.GetRawBevMapPtr();
-  if(raw_bev_map_ptr) {
-     AINFO<<"sequence_num:"<<raw_bev_map_ptr->header.cycle_counter;
-  }
-
+  
 
   ///高速和城区的切换
   bool IS_ON_HIGHWAY_FLAG = false;
   {
-    IS_ON_HIGHWAY_FLAG = GetIsOnHighwayFlag(routing_map_raw);
+    // IS_ON_HIGHWAY_FLAG = GetIsOnHighwayFlag(routing_map_raw);
+    IS_ON_HIGHWAY_FLAG = fusion_manager_->IsOnFreeway();
+    HNOA_L3_LOG << "[Master::Proc] use fusion_manager_->IsOnFreeway for navigation branch, IS_ON_HIGHWAY_FLAG:"
+                        << IS_ON_HIGHWAY_FLAG;
     if (IS_ON_HIGHWAY_FLAG) {
       sd_navigation_base_ = sd_navigation_highway_;
     } else {
@@ -128,7 +156,7 @@ void Master::Proc() {
   cem::fusion::navigation::AccLaneInfo  sd_acc_lane_info;
   FunctionTimer::measureTime("sd_navigation_base_", [&]()
     {sd_navigation_base_->Proc(routing_map_raw, raw_bev_map_ptr, bev_map.bev_map_ptr, guide_lane_result, sd_guide_lane_ids_ref, sd_acc_lane_info);});
-  SD_COARSE_MATCH_LOG << "[sd_navigation_base_->Proc] Normal lane id: "<< sd_acc_lane_info.ego_normal_lane_id;
+  HNOA_L3_LOG << "[sd_navigation_base_->Proc] Normal lane id: "<< sd_acc_lane_info.ego_normal_lane_id;
   // guide_lane_result.clear();
   // guide_lane_result = fusion_manager_->GetRecommendPath();
   auto junctions_ptr = INTERNAL_PARAMS.navigation_info_data.GetJunctionInfoCityPtr();
@@ -170,20 +198,20 @@ void Master::Proc() {
   // Post-processing of the bev map and intergration the guide lane, virtual
   // lane, traffic light status, etc.
   FunctionTimer::measureTime("lane_guidance_", [&]()
-    {lane_guidance_->Process(routing_map_raw, junctions_ptr, bev_map, bev_stopline_objs, guide_lane_result);});
+    {lane_guidance_->Process(routing_map_raw, junctions_ptr, bev_map, bev_stopline_objs, guide_lane_result, fusion_manager_);});
 
-  traffic_light_mapping_->SetEgoLdLaneId(bev_ld_map_geometry_match_info_.GetLdBevLane().id);
-  FunctionTimer::measureTime("traffic_light_mapping_", [&]()
-    {traffic_light_mapping_->Process(routing_map_raw, routing_map, lane_guidance_->GetMapInfo(), sd_navigation_city_, raw_bev_map_ptr,
-                                  lane_guidance_->GetTwb().inverse());});
+  // traffic_light_mapping_->SetEgoLdLaneId(bev_ld_map_geometry_match_info_.GetLdBevLane().id);
+  // FunctionTimer::measureTime("traffic_light_mapping_", [&]()
+  //   {traffic_light_mapping_->Process(routing_map_raw, routing_map, lane_guidance_->GetMapInfo(), sd_navigation_city_, raw_bev_map_ptr,
+  //                                 lane_guidance_->GetTwb().inverse());});
 
   messenger_->PulishDiagno();
-  messenger_->PulishTrafficLightE2E(traffic_light_mapping_->GetTrafficLightsE2E());
+  // messenger_->PulishTrafficLightE2E(traffic_light_mapping_->GetTrafficLightsE2E());
   if(routing_map) {
     BevMapInfoPtr sync_tarck{nullptr};
     SensorDataManager::Instance()->GetLatestSensorFrame(routing_map->header.timestamp, 0.05, sync_tarck);
     // 通过bev停止线调整地图的路口虚拟线起点
-    if(sync_tarck) {
+    if(sync_tarck && !IS_ON_HIGHWAY_FLAG) {//只在城区起作用
       FunctionTimer::measureTime("routing_map_stopline_processor_", [&]()
         {routing_map_stopline_processor_->Process(sync_tarck, bev_map.Twb, routing_map, bev_ld_map_geometry_match_info_);});
     }
@@ -194,12 +222,12 @@ void Master::Proc() {
   map_source_switch_->SetRampFlag(env_info->is_switched_to_LD_);
   map_source_switch_->SetMultipleConsecutiveRoadIntersectionsFlag(
       sd_navigation_city_->IsCutMapActive());
-  map_source_switch_->SetJunctionInfo(
-      traffic_light_mapping_->GetPreviousJunctionEgoPassed(),
-      traffic_light_mapping_->DistanceToJunction(),
-      traffic_light_mapping_->DistanceToSectionOverFirstJunction(),
-      traffic_light_mapping_->IsNextSectionHasJunction());
-  map_source_switch_->SetEgoLaneMatchingInfo(match_detail);
+  // map_source_switch_->SetJunctionInfo(
+  //     traffic_light_mapping_->GetPreviousJunctionEgoPassed(),
+  //     traffic_light_mapping_->DistanceToJunction(),
+  //     traffic_light_mapping_->DistanceToSectionOverFirstJunction(),
+  //     traffic_light_mapping_->IsNextSectionHasJunction());
+  // map_source_switch_->SetEgoLaneMatchingInfo(match_detail);
   FunctionTimer::measureTime("map_source_switch_", [&]() {map_source_switch_->Process();});
 
   auto env_status = map_source_switch_->GetEnvStatus();
@@ -230,10 +258,10 @@ void Master::Proc() {
                               sd_acc_lane_info, sd_navigation_city_->GetInfo());
 
   if (auto map_output = messenger_->GetFusionMapInfo(); map_output) {
-    map_output->mutable_traffic_light_left()->CopyFrom(traffic_light_mapping_->GetLeftStatus());
-    map_output->mutable_traffic_light_right()->CopyFrom(traffic_light_mapping_->GetRightStatus());
-    map_output->mutable_traffic_light_uturn()->CopyFrom(traffic_light_mapping_->GetUturnStatus());
-    map_output->mutable_traffic_light_straight()->CopyFrom(traffic_light_mapping_->GetStraightStatus());
+    // map_output->mutable_traffic_light_left()->CopyFrom(traffic_light_mapping_->GetLeftStatus());
+    // map_output->mutable_traffic_light_right()->CopyFrom(traffic_light_mapping_->GetRightStatus());
+    // map_output->mutable_traffic_light_uturn()->CopyFrom(traffic_light_mapping_->GetUturnStatus());
+    // map_output->mutable_traffic_light_straight()->CopyFrom(traffic_light_mapping_->GetStraightStatus());
     double   adc_to_junction = traffic_light_mapping_->DistanceToJunction();
     fusion_manager_->SetAdc2Junction(adc_to_junction);
     uint64_t ld_counter      = routing_map == nullptr ? 0 : routing_map->header.cycle_counter;
@@ -434,17 +462,53 @@ bool Master::GetIsOnHighwayFlag(const RoutingMapPtr &routing_map_raw) {
 }
 
 /**********************************发送消息的数据结构接口************************************/
+std::shared_ptr<byd::msg::orin::routing_map::TrafficLightsE2EInfo> Master::GetTrafficLightsE2EPtr()
+{
+    TopStatePtr top_state_ptr{nullptr};
+    SensorDataManager::Instance()->GetLatestSensorFrame(top_state_ptr);
+    if (top_state_ptr) {
+      if (top_state_ptr->state_type == StateType::OTHER) {
+        return nullptr;
+      }
+    }
+
+    auto e2e = this->messenger_->GetTrafficLightsE2EInfo();
+    // for (const auto &light : e2e->traffic_lights()) {
+    //     AINFO << "temp_light_info:" << light.DebugString();
+    // }
+    if (e2e && traffic_light_mapping_) {
+        std::string res;
+        res = fmt::format("status_size:{}", e2e->traffic_status_size());
+        if (!e2e->traffic_status().empty()) {
+          res += " (turn,status,navi) [";
+        }
+        for (const auto &stat : e2e->traffic_status()) {
+          res += fmt::format("{},{},{:d};", stat.turn_type(), stat.light_status(), stat.is_navi_light());
+        }
+        if (!e2e->traffic_status().empty()) {
+          res += "] ";
+        }
+        e2e->mutable_header()->set_module_name(res + traffic_light_mapping_e2e_->TrafficLightLaneDebug());
+    }
+    TRAFFIC_LOG << " Info_Traffic " << e2e->header().module_name();
+
+    return e2e;
+}
 
 std::shared_ptr<byd::msg::basic::ModuleStatus> Master::GetModuleStatusPtr() {
   return this->messenger_->GetDiagnoInfo();
 }
 
 std::shared_ptr<byd::msg::orin::routing_map::RoutingMap> Master::GetENVRoutingMapPtr() {
-  return this->messenger_->GetRoutingMapInfo();
-}
+  TopStatePtr top_state_ptr{nullptr};
+  SensorDataManager::Instance()->GetLatestSensorFrame(top_state_ptr);
+  if (top_state_ptr) {
+    if (top_state_ptr->state_type == StateType::OTHER) {
+      return nullptr;
+    }
+  }
 
-std::shared_ptr<byd::msg::orin::routing_map::TrafficLightsE2EInfo> Master::GetTrafficLightsE2EPtr() {
-  return this->messenger_->GetTrafficLightsE2EInfo();
+  return this->messenger_->GetRoutingMapInfo();
 }
 
 /***************************接收消息callback函数在此处实现************************************/
@@ -472,7 +536,7 @@ void Master::OnRoutingMapCallBack(const std::shared_ptr<byd::msg::orin::routing_
 
 void Master::OnMsgMapEventCallback(const std::shared_ptr<byd::msg::orin::routing_map::MapEvent> &msg) {
   this->messenger_->Callback<byd::msg::orin::routing_map::MapEvent, cem::message::env_model::MapEvent>(msg);
-} /* OnMsgMapEventCallback */
+}
 
 void Master::OnPercepTrfInfoCallback(const std::shared_ptr<byd::msg::perception::PerceptionTrafficInfo> &msg) {
   this->messenger_->Callback<byd::msg::perception::PerceptionTrafficInfo, cem::message::sensor::PercepTrfInfo>(msg);
@@ -508,10 +572,10 @@ void Master::OnPlanFuncStateCallback(const std::shared_ptr<byd::msg::pnc::PlanFu
 void Master::OncanoutCallback(const std::shared_ptr<byd::msg::orin::sm_msgs::MsgSM_BYD_CAN_Output> &msg) {
   this->messenger_->Callback<byd::msg::orin::sm_msgs::MsgSM_BYD_CAN_Output, cem::message::env_model::CAN1>(msg);
 }
+
 void Master::OnOccCallback(const std::shared_ptr<byd::msg::perception::OCCInfo>& msg){
   this->messenger_->Callback<byd::msg::perception::OCCInfo,cem::env_model::occ::OCCInfo>(msg);
   return;
-
 }
 void Master::OnNaviTrafCallback(const std::shared_ptr<byd::msg::drivers::TrafficInfoNotify> &msg) {
   this->messenger_->Callback<byd::msg::drivers::TrafficInfoNotify, cem::message::env_model::NaviTrafficInfo>(msg);
@@ -521,32 +585,69 @@ void Master::OnDriversEventCallback(const std::shared_ptr<byd::msg::drivers::Eve
 }
 
 void Master::OnSDTrafficLightCallback(const std::shared_ptr<byd::msg::drivers::sdTrafficLight> &msg) {
+    if (msg == nullptr) {
+        E2E_TRAFFIC_LIGHT << "e2e_map is nullptr.";
+        return;
+    }
 #if defined(PC_X86_RUN_FLAG) && (PC_X86_RUN_FLAG)
-  if (msg && msg->has_header() && msg->header().has_publish_timestamp()) {
     msg->mutable_header()->set_publish_timestamp(GetMwTimeNowSec());
-  }
 #endif
-  SensorDataManager::Instance()->AddSensorMeasurements(msg);
-}
-
-void Master::OnMapLocationResultCallback(const std::shared_ptr<byd::modules::localization::MapMatchResult> &msg) {
-#if defined(PC_X86_RUN_FLAG) && (PC_X86_RUN_FLAG)
-  if (msg && msg->has_header() && msg->header().has_publish_timestamp()) {
-    msg->mutable_header()->set_publish_timestamp(GetMwTimeNowSec());
-  }
-#endif
-  SensorDataManager::Instance()->AddSensorMeasurements(msg);
-}
-
-void Master::OnMapLocationResultBaiduCallback(
-    const std::shared_ptr<byd::modules::localization::MapMatchResult> &msg) {
-  this->messenger_->Callback<byd::modules::localization::MapMatchResult,
-                             cem::message::sensor::MapMatchResultBaidu>(msg);
+    SensorDataManager::Instance()->AddSensorMeasurements(msg);
 }
 
 void Master::OnMsgObstaclesCallback(const std::shared_ptr<byd::msg::pnc::ObjInfoFusn> &msg) {
   ;
 }
+
+void Master::OnE2EMapRawCallBack(const E2EMapRawPtr &msg) {
+    if (msg == nullptr) {
+        E2E_TRAFFIC_LIGHT << "e2e_map is nullptr.";
+        return;
+    }
+    e2e_map_ptr_ = msg;
+#if defined(PC_X86_RUN_FLAG) && (PC_X86_RUN_FLAG)
+    msg->mutable_header()->set_publish_timestamp(GetMwTimeNowSec());
+#endif
+    SensorDataManager::Instance()->AddSensorMeasurements(msg);
+    // E2E_TRAFFIC_LIGHT << "e2e_map info:" << e2e_map_ptr_->DebugString();
+}
+
+void Master::OnE2eMapCallback(
+    const std::shared_ptr<byd::msg::orin::e2e_map::E2EMap> &msg) {
+  this->messenger_
+      ->Callback<byd::msg::orin::e2e_map::E2EMap, cem::message::sensor::E2eMap>(
+          msg);
+}
+
+void Master::OnE2ETrafficResultCallBack(const std::shared_ptr<byd::msg::perception::E2ETrafficResult> &msg) {
+  if (msg == nullptr) {
+        E2E_TRAFFIC_LIGHT << "e2e_result is nullptr.";
+        return;
+  }
+#if defined(PC_X86_RUN_FLAG) && (PC_X86_RUN_FLAG)
+  msg->mutable_header()->set_publish_timestamp(GetMwTimeNowSec());
+#endif
+  SensorDataManager::Instance()->AddSensorMeasurements(msg);
+}
+
+void Master::OnMapLocationResultCallback(const std::shared_ptr<byd::modules::localization::MapMatchResult> &msg) {
+  if (msg == nullptr) {
+        E2E_TRAFFIC_LIGHT << "mapmatch is nullptr.";
+        return;
+  }
+#if defined(PC_X86_RUN_FLAG) && (PC_X86_RUN_FLAG)
+  if (msg && msg->has_header() && msg->header().has_publish_timestamp()) {
+        msg->mutable_header()->set_publish_timestamp(GetMwTimeNowSec());
+  }
+#endif
+  SensorDataManager::Instance()->AddSensorMeasurements(msg);
+}
+
+/***************************************************************************************************/
+void Master::OnTopStateCallback(const std::shared_ptr<byd::msg::state_machine::TopState>& msg) {
+  this->messenger_->Callback<byd::msg::state_machine::TopState, cem::message::sensor::TopState>(msg);
+}
+
 /***************************************************************************************************/
 
 }  // namespace fusion

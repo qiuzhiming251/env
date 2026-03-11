@@ -36,7 +36,8 @@ void LaneGuidance::Process(const RoutingMapPtr routing_map_ptr,
                            const cem::fusion::SdJunctionInfoCityPtr junctions_ptr, 
                            DetectBevMap &aligned_map,
                            const std::vector<cem::message::env_model::StopLine>  &stop_lines,
-                           std::vector<std::pair<uint64_t, std::pair<int, int>>> &guide_lane_result) {
+                           std::vector<std::pair<uint64_t, std::pair<int, int>>> &guide_lane_result,
+                           std::unique_ptr<FusionManager>& fusion_manager) {
   if (aligned_map.bev_map_ptr == nullptr) {
     return;
   }
@@ -52,10 +53,10 @@ void LaneGuidance::Process(const RoutingMapPtr routing_map_ptr,
   // 获取merge拓扑信息
   is_highway_ = bev_map.env_info.is_on_highway_;
   SD_MERGE_LOG << fmt::format("[LaneGuidanceCity] is_highway: {}", is_highway_);
-  // std::vector<MergeDetail> merge_details_new;
-  // topology_extractor_.SetIsHighway(is_highway_);
-  // topology_extractor_.GetMergeTopologiesFromMap(merge_details_new);
-  // topology_extractor_.PrintMergeDetails(merge_details_new);
+  std::vector<MergeDetail> merge_details_new;
+  topology_extractor_.SetIsHighway(is_highway_);
+  topology_extractor_.GetMergeTopologiesFromMap(merge_details_new);
+  topology_extractor_.PrintMergeDetails(merge_details_new);
 
   if (routing_map_ptr) {
     SDStateFusion(bev_map, routing_map_ptr);
@@ -87,7 +88,7 @@ void LaneGuidance::Process(const RoutingMapPtr routing_map_ptr,
 
   InsertMergeSplitPoints(bev_map);
 
-  topology_extractor_.SetBevLaneMergeTopoNew(routing_map_ptr ,bev_map);
+  topology_extractor_.SetBevLaneMergeTopoNew(fusion_manager, bev_map, merge_details_new);
 
   SD_MERGE_LOG << fmt::format("[LaneGuidanceCity] Now BEV lane size: {}", bev_map.lane_infos.size());
   for (const auto &lane : bev_map.lane_infos) {
@@ -459,8 +460,19 @@ void LaneGuidance::RemoveSpecialLaneTopo(BevMapInfo &bev_map, const RoutingMapPt
         continue;
       }
 
-      if (pre_lane->split_topo_extend == SplitTopoExtendType::TOPOLOGY_SPLIT_LEFT ||
-          pre_lane->split_topo_extend == SplitTopoExtendType::TOPOLOGY_SPLIT_RIGHT) {
+      bool is_topo_for_navigation_removal = false;
+      if (pre_lane->previous_lane_ids.size() == 1) {
+        auto base_id = pre_lane->previous_lane_ids.front();
+        auto base_lane = std::find_if(bev_map.lane_infos.begin(), bev_map.lane_infos.end(),
+                                  [base_id](BevLaneInfo &lane) { return lane.id == base_id; });
+        if (base_lane != bev_map.lane_infos.end() && base_lane->next_lane_ids.size() < 2) {
+          is_topo_for_navigation_removal = true;
+        }
+      }
+
+      if (!is_topo_for_navigation_removal &&
+        (pre_lane->split_topo_extend == SplitTopoExtendType::TOPOLOGY_SPLIT_LEFT ||
+          pre_lane->split_topo_extend == SplitTopoExtendType::TOPOLOGY_SPLIT_RIGHT)) {
         highway_split_ids.insert(lane.id);
         lane.is_topo_disassembled = true;
         lane.previous_lane_ids.clear();
@@ -471,6 +483,7 @@ void LaneGuidance::RemoveSpecialLaneTopo(BevMapInfo &bev_map, const RoutingMapPt
         pre_lane->next_lane_ids.clear();
       }
     }
+
     for (auto &lane : bev_map.lane_infos) {
       for (auto it = lane.previous_lane_ids.begin(); it != lane.previous_lane_ids.end();) {
         if (highway_split_ids.find(*it) != highway_split_ids.end()) {
@@ -1325,31 +1338,61 @@ void LaneGuidance::RemoveLanemarkerRepeatPoint(BevMapInfo &bev_map) {
 }
 
 void LaneGuidance::RemoveSectionLanemarkerRepeatPoint(std::vector<BevMapSectionInfo>& sections) {
+  const double threshold_sq = kDistanceThreshold * kDistanceThreshold;  // 使用平方避免开方
+  
   for (auto &section : sections) {
-    for (auto lanemarker : section.lanemarkers) {
-      auto points = lanemarker.line_points;
-      if (points.empty()) {
+    for (auto &lanemarker : section.lanemarkers) {
+      auto &points = lanemarker.line_points;
+      if (points.size() < 2) {
         continue;
       }
-      std::set<int> match_idx;
-      for (int pre_idx = 0; pre_idx < points.size() - 1; pre_idx++) {
-        const Eigen::Vector3d pre_pt{points[pre_idx].x, points[pre_idx].y, 0.0};
-        for (int next_idx = pre_idx + 1; next_idx < points.size(); next_idx++) {
-          const Eigen::Vector3d next_pt{points[next_idx].x, points[next_idx].y, 0.0};
-          const double          dist = (pre_pt - next_pt).norm();
-          if (dist < kDistanceThreshold) {
-            match_idx.insert(next_idx);
+      
+      // 1. 使用vector<bool>标记删除，比std::set更高效
+      std::vector<bool> to_remove(points.size(), false);
+      size_t remove_count = 0;
+      
+      // 2. 外层循环优化：跳过已标记删除的点
+      for (size_t pre_idx = 0; pre_idx < points.size() - 1; ++pre_idx) {
+        if (to_remove[pre_idx]) continue;  // 已标记删除的源点跳过
+        
+        const auto &pre_pt = points[pre_idx];  // 直接使用Point2DF
+        double pre_x = pre_pt.x;
+        double pre_y = pre_pt.y;
+        
+        // 3. 内层循环优化：从pre_idx+1开始，跳过已删除点
+        for (size_t next_idx = pre_idx + 1; next_idx < points.size(); ++next_idx) {
+          if (to_remove[next_idx]) continue;  // 已标记删除的目标点跳过
+          
+          const auto &next_pt = points[next_idx];
+          double dx = next_pt.x - pre_x;
+          double dy = next_pt.y - pre_y;
+          
+          // 4.使用平方距离避免开方
+          double dist_sq = dx * dx + dy * dy;
+          if (dist_sq < threshold_sq) {
+            to_remove[next_idx] = true;
+            remove_count++;
           }
         }
       }
-      std::vector<cem::message::common::Point2DF> fitled_points;
-      for (int idx = 0; idx < points.size(); idx++) {
-        if (match_idx.find(idx) == match_idx.end()) {
-          fitled_points.emplace_back(points[idx]);
-        }
-        lanemarker.line_points.clear();
-        lanemarker.line_points = fitled_points;
+      
+      // 8. 如果没有点要删除，跳过重建
+      if (remove_count == 0) {
+        continue;
       }
+      
+      // 9. 构建新点集（原地重建，避免额外内存）
+      std::vector<cem::message::common::Point2DF> filtered_points;
+      filtered_points.reserve(points.size() - remove_count);
+      
+      for (size_t idx = 0; idx < points.size(); ++idx) {
+        if (!to_remove[idx]) {
+          filtered_points.emplace_back(points[idx]);
+        }
+      }
+      
+      // 10. 移动而非拷贝
+      lanemarker.line_points = std::move(filtered_points);
     }
   }
 }
@@ -3207,9 +3250,9 @@ void LaneGuidance::CaculateLanePosition(BevMapSectionInfo &section, std::vector<
   std::vector<LineSort>                                                       line_sorts2;
   std::vector<LineSort>                                                       line_sorts;
   auto                                                                        T_ego_local = T_local_ego_.inverse();
-  auto                                                                        lane_infos  = section.lane_infos;
+  auto                                                                        laneInfoes  = section.lane_infos;
 
-  for (auto &lane : lane_infos) {
+  for (auto &lane : laneInfoes) {
     Vec2fVector geo1 = std::make_shared<std::vector<Eigen::Vector2f>>();
     Vec2fVector geo2 = std::make_shared<std::vector<Eigen::Vector2f>>();
     Vec2fVector geo  = std::make_shared<std::vector<Eigen::Vector2f>>();
@@ -3314,30 +3357,22 @@ void LaneGuidance::CaculateLanePosition(BevMapSectionInfo &section, std::vector<
           }
         }
 
-        bool result = false;
-        float sum_y1 = 0;
-        float sum_y2 = 0;
-        std::vector<Eigen::Vector2f> truncated_lane_points;
-        if (is_highway_) {
-          if (l1_geos->front().x() - l2_geos->front().x() > 25.0f && l2_geos->front().x() < -25) {
-            std::copy_if(l2_geos->begin(), l2_geos->end(), std::back_inserter(truncated_lane_points),
-              [](const Eigen::Vector2f& point) {
-                  return point.x() > 0.0f;
-              });
-              if (truncated_lane_points.size() >= 2) {
-                return IsLeftLane(*l1_geos, truncated_lane_points);
-              }
-          } else if (l2_geos->front().x() - l1_geos->front().x() > 25.0f && l1_geos->front().x() < -25) {
-            std::copy_if(l1_geos->begin(), l1_geos->end(), std::back_inserter(truncated_lane_points),
-              [](const Eigen::Vector2f& point) {
-                  return point.x() > 0.0f;
-              });
-              if (truncated_lane_points.size() >= 2) {
-                return IsLeftLane(truncated_lane_points, *l2_geos);
-              }
+        auto ret = LaneGeometry::JudgeIsLeftUseRawPtFilter(*l1_geos, *l2_geos);
+        if (-1 == ret) {  // 可以比较的点全部在距离范围内 l1_geos  l2_geos比较y坐标
+          auto sum_y1 =
+              std::accumulate(l1_geos->begin(), l1_geos->end(), 0.0, [](double a, const Eigen::Vector2f &b) { return a + b.y(); });
+          auto sum_y2 =
+              std::accumulate(l2_geos->begin(), l2_geos->end(), 0.0, [](double a, const Eigen::Vector2f &b) { return a + b.y(); });
+          if (!l1_geos->empty() && !l2_geos->empty()) {
+            sum_y1 /= l1_geos->size();
+            sum_y2 /= l2_geos->size();
           }
+          return sum_y1 > sum_y2;
+        } else if (1 == ret) {
+          return true;
+        } else {
+          return false;
         }
-        return IsLeftLane(*l1_geos, *l2_geos);
       } else {
         return false;
       }
@@ -3386,22 +3421,22 @@ void LaneGuidance::CaculateLanePosition(BevMapSectionInfo &section, std::vector<
       }
     }
     // 处理第一个
-    auto lane_iter = std::find_if(section.lane_infos.begin(), section.lane_infos.end(),
+    auto laneIt = std::find_if(section.lane_infos.begin(), section.lane_infos.end(),
                                [&line_sorts1](const BevLaneInfo &lane) { return lane.id == line_sorts1.begin()->id; });
-    if ((lane_iter != section.lane_infos.end()) && (line_sorts1.size() > 1)) {
-      lane_iter->left_lane_id  = 0;
-      lane_iter->right_lane_id = std::next(line_sorts1.begin())->id;
-      if (lane_graph.GetNode(lane_iter->id)) {
-        lane_graph.AddRightNode(lane_graph.GetNode(lane_iter->id), lane_iter->right_lane_id);
+    if ((laneIt != section.lane_infos.end()) && (line_sorts1.size() > 1)) {
+      laneIt->left_lane_id  = 0;
+      laneIt->right_lane_id = std::next(line_sorts1.begin())->id;
+      if (lane_graph.GetNode(laneIt->id)) {
+        lane_graph.AddRightNode(lane_graph.GetNode(laneIt->id), laneIt->right_lane_id);
       }
     }
-    lane_iter = std::find_if(section.lane_infos.begin(), section.lane_infos.end(),
+    laneIt = std::find_if(section.lane_infos.begin(), section.lane_infos.end(),
                           [&line_sorts1](const BevLaneInfo &lane) { return lane.id == (line_sorts1.end() - 1)->id; });
-    if ((lane_iter != section.lane_infos.end()) && (line_sorts1.size() > 1)) {
-      lane_iter->right_lane_id = 0;
-      lane_iter->left_lane_id  = std::prev(line_sorts1.end() - 1)->id;
-      if (lane_graph.GetNode(lane_iter->id)) {
-        lane_graph.AddLeftNode(lane_graph.GetNode(lane_iter->id), lane_iter->left_lane_id);
+    if ((laneIt != section.lane_infos.end()) && (line_sorts1.size() > 1)) {
+      laneIt->right_lane_id = 0;
+      laneIt->left_lane_id  = std::prev(line_sorts1.end() - 1)->id;
+      if (lane_graph.GetNode(laneIt->id)) {
+        lane_graph.AddLeftNode(lane_graph.GetNode(laneIt->id), laneIt->left_lane_id);
       }
     }
   }

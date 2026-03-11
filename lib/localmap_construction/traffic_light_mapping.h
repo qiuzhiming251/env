@@ -26,7 +26,6 @@
 #include <unordered_map>
 
 #include <cyber/common/log.h>
-#include <localmap_construction/cloud_config_traffic_light.h>
 
 #include "Eigen/Dense"
 #include "lib/common/log_custom.h"
@@ -45,7 +44,6 @@ namespace cem::fusion {
 using byd::common::math::LineSegment2d;
 using byd::common::math::Polygon2d;
 using cem::message::sensor::TrfObjectInfo;
-using SequencenumObjId = std::pair<uint64_t, uint64_t>;
 
 #if defined(TRAFFIC_LIGHT_LOG) && (TRAFFIC_LIGHT_LOG)
 #define TRAFFIC_LOG LOG_LP
@@ -66,7 +64,7 @@ using SequencenumObjId = std::pair<uint64_t, uint64_t>;
 #endif
 
 constexpr double lane_belong_traffic_light_threshold = 48.0;
-constexpr double dis_crosswalk_right_dedicated       = 14.0;
+constexpr double dis_crosswalk_right_dedicated       = 8.0;
 const uint32_t   max_vec_size                        = 10;
 constexpr double lane_virtual_dis_threshold          = 50.0;
 constexpr double lane_uturn_dis_threshold            = 30.0;
@@ -87,8 +85,6 @@ class TrafficLightMapping {
   uint32_t GetPerceptionCyberCounter() const { return cycle_counter_perception_obj_; }
 
   double DistanceToJunction() const { return distance_to_junction_; }
-
-  double DistanceToSectionOverFirstJunction() const { return distance_to_section_over_first_junction_; };
 
   const std::string &TrafficLightLaneDebug() const { return info_traffic_lights_; }
 
@@ -117,10 +113,6 @@ class TrafficLightMapping {
   ::byd::msg::orin::routing_map::TrafficLightStatus GetStraightStatus() const { return light_straight_; };
   ::byd::msg::orin::routing_map::TrafficLightStatus GetRightStatus() const { return light_right_; };
 
-  void SetEgoLdLaneId(uint64_t id) { ego_ld_lane_id_ = id; }
-
-  bool IsNextSectionHasJunction() const { return is_section_junction_; }
-
  private:
   void IsEgoDedicatedRight();
 
@@ -132,11 +124,6 @@ class TrafficLightMapping {
     traffic_lights_                      = TrafficLights();
     distance_to_junction_                = std::numeric_limits<double>::infinity();
     dis_ego_light_junction_              = std::numeric_limits<double>::infinity();
-    junction_orin_vertical_              = std::nullopt;
-    junction_orin_connect_               = std::nullopt;
-    section_orin_vertical_               = std::nullopt;
-
-    is_section_junction_ = false;
 
     perception_traffic_light_info_.reset();
     routing_map_ptr_.reset();
@@ -152,19 +139,13 @@ class TrafficLightMapping {
     light_straight_.Clear();
     junction_light_ids_.clear();
     section_light_ids_.clear();
-    for (auto &[turn_type, seq_deque] : history_ids_) {
-      if (seq_deque.size() > 30) {
-        seq_deque.erase(seq_deque.begin(), seq_deque.begin() + (seq_deque.size() - 30));
-      }
-    }
   }
 
   void MatchLightAndJunction(const RoutingMapPtr &routing_map);
 
   void FindBestLight(const RoutingMapPtr &routing_map);
 
-  void GetTrafficLightsLd(const std::optional<byd::common::math::Polygon2d> &junction_polygon,
-                          const std::vector<TrfObjectInfo>                  &traffic_lights_vec);
+  void GetTrafficLightsLd(const std::vector<TrfObjectInfo> &traffic_lights_vec);
   // TrafficLights GetTrafficLightsInJunction(const std::vector<TrfObjectInfo> &traffic_lights_vec);
   // TrafficLights GetTrafficLightsInSection(const std::vector<TrfObjectInfo> &traffic_lights_vec);
 
@@ -252,48 +233,6 @@ class TrafficLightMapping {
 
   std::optional<std::tuple<uint64_t, double, bool>> MatchTrafficLightAndJunctionStopline(const RoutingMapPtr &routing_map);
 
-  static bool IsSameColor(const std::vector<TrfObjectInfo> &qual_obj_temp);
-
-  void GetTrafficArrow(const std::vector<TrfObjectInfo> &traffic_lights_vec, const std::vector<TrafficLightShapeType> &shapes,
-                       const TrafficLight &traffic_light_prev, TrafficLight &traffic_light_tmp);
-
-  void GetPolygonFromJunction(const RoutingMapPtr &routing_map, uint64_t junction_id,
-                              std::vector<uint64_t> *const prev_lanes_ptr = nullptr);
-
-  static std::vector<TrfObjectInfo> FilterTrfObjByPolygon(const TransformParams            &transform_para,
-                                                          const std::vector<TrfObjectInfo> &traffic_lights_vec, double width_offset_left,
-                                                          double width_offset_right, double upper_offset, double lower_offset = -10);
-
-  void GetPolygonFromSection(const RoutingMapPtr &routing_map, uint64_t section_id, std::vector<uint64_t> *const prev_lanes_ptr);
-
-  void UpdateHistoryObjId();
-
-  void PrevStopWhenLeftWait(const RoutingMapPtr &routing_map, const RoutingMapPtr &routing_map_output, uint64_t junction_id,
-                            double distance_to_stopline);
-
-  uint64_t GetHisTimes(TurnType turn_type, uint64_t id);
-
-  std::vector<TrfObjectInfo> FilterTrafObjsUturnPoly(const RoutingMapPtr &routing_map, const TransformParams &transform_para,
-                                                     const std::vector<TrfObjectInfo> &traffic_lights_vec,
-                                                     const std::vector<uint64_t>      &prev_lane_ids);
-
-  bool IsUturnSection(const RoutingMapPtr &routing_map, const std::vector<uint64_t> &section_lanes_id, const std::set<uint64_t> &light_ids);
-
-  static bool IsSameLight(const TrfObjectInfo &lhs, const TrfObjectInfo &rhs);
-
-  bool IsSectionEnteringRoundabout(uint64_t section_id);
-
-  static bool IsLinkType(uint32_t link_type, byd::msg::orin::routing_map::SectionInfo::LDLinkTypeMask linktype_mask) {
-    return (link_type & static_cast<uint32_t>(linktype_mask)) == static_cast<uint32_t>(linktype_mask);
-    //     (link_type & static_cast<uint32_t>(linktype_mask)) == static_cast<uint32_t>(linktype_mask);
-  }
-
-  void ProcessArrowCircleRightLight();
-
-  cem::message::sensor::TrafficLightColorType IsFlashLight(const TrfObjectInfo &lhs);
-
-  std::vector<TrafficLightShapeType> GetTurnType(TurnType turn_type);
-
   double timestamp_{0.0};  // sec
 
   bool is_right_exist{false};
@@ -310,7 +249,6 @@ class TrafficLightMapping {
 
   double distance_to_junction_{std::numeric_limits<double>::infinity()};
   double dis_ego_light_junction_{std::numeric_limits<double>::infinity()};
-  double distance_to_section_over_first_junction_{std::numeric_limits<double>::infinity()};
 
   double distance_to_junction_prev_{std::numeric_limits<double>::infinity()};
   double distance_to_ego_light_junction_prev_{std::numeric_limits<double>::infinity()};
@@ -354,23 +292,11 @@ class TrafficLightMapping {
 
   TrafficLights traffic_lights_ld_;
   TrafficLights traffic_lights_prev_ld_;
-  uint64_t      ego_ld_lane_id_ = 0;
-
-  std::optional<TrafficLights> cloud_traffic_light_;
-
-  std::optional<TransformParams> junction_orin_vertical_;
-  std::optional<TransformParams> junction_orin_connect_;
-  std::optional<TransformParams> section_orin_vertical_;
-
-  bool is_section_junction_{false};
-
-  std::map<TurnType, std::deque<SequencenumObjId>> history_ids_;
-
-  std::map<uint64_t, double> left_distance_stopline_map_;
 
   const std::vector<TrafficLightShapeType> straight_shapes_ = {TLS_UP_ARROW, TLS_UP_LEFT_ARROW, TLS_UP_RIGHT_ARROW};
   const std::vector<TrafficLightShapeType> left_shapes_     = {TLS_UP_LEFT_ARROW, TLS_LEFT_ARROW, TLS_LEFT_TURN_ARROUND_ARROW};
-  const std::vector<TrafficLightShapeType> uturn_shapes_    = {TLS_LEFT_TURN_ARROUND_ARROW, TLS_TURN_ARROUND_ARROW, TLS_UP_LEFT_ARROW};
+  const std::vector<TrafficLightShapeType> uturn_shapes_    = {TLS_LEFT_TURN_ARROUND_ARROW, TLS_TURN_ARROUND_ARROW, TLS_UP_LEFT_ARROW,
+                                                               TLS_LEFT_ARROW};
   const std::vector<TrafficLightShapeType> right_shapes_    = {TLS_UP_RIGHT_ARROW, TLS_RIGHT_ARROW};
 };
 

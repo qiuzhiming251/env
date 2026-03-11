@@ -1,5 +1,5 @@
-#ifndef DATA_MANAGER_H_
-#define DATA_MANAGER_H_
+#ifndef BEV_MAP_PRE_PROCESSOR_H_
+#define BEV_MAP_PRE_PROCESSOR_H_
 
 #include <base/params_manager/params_defination/internal_params.h>
 #include <base/params_manager/params_manager.h>

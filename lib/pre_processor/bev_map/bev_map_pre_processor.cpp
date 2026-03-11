@@ -101,7 +101,7 @@ void BevMapPreProcessor::Process(BevMapInfoPtr bev_map) {
     input_bev_map_ptr_ = bev_map;
   }
 
-  FuseLidarRoadEdgeIntoBevMap();
+  // FuseLidarRoadEdgeIntoBevMap();
 
   ConstructRightTurnTrajectory();
 
@@ -271,6 +271,7 @@ bool BevMapPreProcessor::GetBezierVector(const std::vector<Point2DF> &line_point
 
   return true;
 }
+
 void BevMapPreProcessor::CompensateLanePoints() {
   if (input_bev_map_ptr_ == nullptr) {
     return;
@@ -280,30 +281,46 @@ void BevMapPreProcessor::CompensateLanePoints() {
     if (!lane.id || lane.line_points.size() < 2) {
       continue;
     }
-
-    std::sort(lane.line_points.begin(), lane.line_points.end(), [&](Point2DF &pt1, Point2DF &pt2) { return pt1.x < pt2.x; });
-
-    // AINFO << " lane id: " << lane.id;
+    
     for (size_t i = 0; i < lane.line_points.size() - 1; ++i) {
-      float x1 = lane.line_points[i].x;
-      float y1 = lane.line_points[i].y;
-      float x2 = lane.line_points[i + 1].x;
-      float y2 = lane.line_points[i + 1].y;
-      if (x2 - x1 >= 9) {
-        // AINFO << "start: " << lane.line_points[i].x << "," << lane.line_points[i].y;
-        // AINFO << "end: " << lane.line_points[i + 1].x << "," << lane.line_points[i + 1].y;
-        int numPointsToInsert = static_cast<int>((x2 - x1) / 2) - 1;
-        for (int j = 1; j <= numPointsToInsert; ++j) {
-          float newX = x1 + j * 2;
-          float newY = y1 + (y2 - y1) * (j * 2) / (x2 - x1);
-          lane.line_points.insert(lane.line_points.begin() + i + j, Point2DF(newX, newY));
-          // AINFO << "add: " << newX << "," << newY;
+
+      Point2DF start = lane.line_points[i];
+      Point2DF end   = lane.line_points[i + 1];
+
+      double dx = end.x - start.x;
+      double dy = end.y - start.y;
+
+      // 步骤1：计算总欧式距离，判断是否需要补充
+      double distance = std::sqrt(dx * dx + dy * dy);
+
+      if(distance >= 9.0)
+      {
+        // 步骤2：精确计算补充点数量
+        int point_num = distance / 2.0;
+
+        // 步骤3：计算单位向量（方向与原向量一致，长度为1）
+        double unitX = dx / distance;
+        double unitY = dy / distance;
+
+        for (int k = 1; k <= point_num; ++k) 
+        {
+          // 计算第k个补充点的坐标：沿单位向量移动k*stepLength距离
+          double currentX = start.x + k * 2.0 * unitX;
+          double currentY = start.y + k * 2.0 * unitY;
+
+          double delt_x = currentX - start.x;
+          double delt_y = currentY - start.y;
+
+          // 冗余判断：避免浮点误差导致补充点超出线段范围
+          double dist = std::sqrt(delt_x * delt_x + delt_y * delt_y);
+          if (dist >= distance + 1e-6) {
+            break;
+          }
+          lane.line_points.insert(lane.line_points.begin() + i + k, Point2DF(currentX, currentY));
         }
-        i += numPointsToInsert;
-        // AINFO << "numPointsToInsert: " << numPointsToInsert;
+        i += point_num;
       }
     }
-
     std::vector<Eigen::Vector2f> geos;
     for (const auto &point : lane.line_points) {
       geos.emplace_back(point.x, point.y);

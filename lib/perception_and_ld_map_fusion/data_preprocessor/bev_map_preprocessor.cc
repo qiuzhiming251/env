@@ -212,7 +212,7 @@ void BevMapProcessor::ConstructLanesIndex() {
 }
 
 void BevMapProcessor::ConfirmEmergencyLane(const std::function<LaneType(uint64_t)> &LaneTypeGetter, std::string &debug_infos,
-                                           bool EgoIsEmergency) {
+                                           bool EgoIsEmergency,bool LowPrecisionFlag) {
   if (data_ == nullptr) {
     return;
   }
@@ -243,7 +243,7 @@ void BevMapProcessor::ConfirmEmergencyLane(const std::function<LaneType(uint64_t
       if (DEBUG_EL)
         AINFO << "ego lane id: " << ego_lane_ptr->id;
       //检查漏检的ego应急车道
-      if(emergency_lanes.empty()||emergency_lanes.back()->id!=ego_lane_ptr->id){
+      if (!LowPrecisionFlag && (emergency_lanes.empty() || emergency_lanes.back()->id != ego_lane_ptr->id)) {
         auto lane_type = LaneTypeGetter(ego_lane_ptr->id);
         if (DEBUG_EL)
           AINFO << ego_lane_ptr->id << ",lane_type: " << static_cast<int>(lane_type);
@@ -262,6 +262,8 @@ void BevMapProcessor::ConfirmEmergencyLane(const std::function<LaneType(uint64_t
     return;
 
   auto try_set_emergency_from_ids = [&](const std::vector<uint64_t> &ids) {
+    if (LowPrecisionFlag)
+      return;
     for (auto id : ids) {
       BevLaneInfo *itr = lane_map[id];
       if (DEBUG_EL)
@@ -303,6 +305,9 @@ void BevMapProcessor::ConfirmEmergencyLane(const std::function<LaneType(uint64_t
         try_set_emergency_from_ids(lane_ptr->previous_lane_ids);
       }
     }
+    if (LowPrecisionFlag)
+      continue;
+
     //地图校验
     if (!confirm_map[lane_ptr->id]) {
       auto lane_type = LaneTypeGetter(lane_ptr->id);
@@ -614,7 +619,7 @@ void BevMapProcessor::TopoProcessor(const std::function<std::vector<const BevSpl
   RemoveDuplicateLaneIds();
   RemoveNonExistentSuccessor();
   RemoveNonExistentPredecessor();
-  DeleteLaneTopology(LaneSplitGetter, LaneMergeGetter, LaneTypeGetter, ld_map, bev_ld_match, split_match_infos, merge_match_infos, connect_match_infos, low_precision_flag, debug_infos);
+  ModifyLanesUturn(LaneSplitGetter, LaneMergeGetter, LaneTypeGetter, ld_map, bev_ld_match, split_match_infos, merge_match_infos, connect_match_infos, low_precision_flag, debug_infos);
   AddLaneTopology(LaneSplitGetter, LaneMergeGetter, LaneTypeGetter, ld_map, bev_ld_match, split_match_infos, merge_match_infos, connect_match_infos, low_precision_flag, debug_infos);
   ConstructLanesIndex();
 }
@@ -1060,7 +1065,9 @@ void BevMapProcessor::AddLaneTopology(const std::function<std::vector<const BevS
 
   if (routing_map_ptr_) {
     if (!is_on_highway) {
-      lane_topology_processor_.GetCrossParam(cross_road_status_,cross_road_distance_,is_turn_right_);
+      debug_infos += "[ConnectedLane]cross_road_status_:" + std::to_string(cross_road_status_) +
+                     ",is_turn_right_:" + std::to_string(is_turn_right_) + ",cross_road_distance_:" + std::to_string(cross_road_distance_);
+      lane_topology_processor_.GetCrossParam(cross_road_status_, cross_road_distance_, is_turn_right_);
       lane_topology_processor_.SetAdc2Junction(adc_to_junction_);
       lane_topology_processor_.SetBrokenTopoInfo(data_);
     }
@@ -1083,7 +1090,7 @@ void BevMapProcessor::AddLaneTopology(const std::function<std::vector<const BevS
   # endif
 
     //确认是否紧急车道
-    ConfirmEmergencyLane(LaneTypeGetter, debug_infos, ego_lane_emergency_flag);
+    ConfirmEmergencyLane(LaneTypeGetter, debug_infos, ego_lane_emergency_flag, low_precision_flag);
   }
 
 # ifdef AddTopoDebug
@@ -1113,7 +1120,7 @@ void BevMapProcessor::AddLaneTopology(const std::function<std::vector<const BevS
 # endif
 }
 
-void BevMapProcessor::DeleteLaneTopology(const std::function<std::vector<const BevSplitInfo*>(uint64_t)>& LaneSplitGetter,
+void BevMapProcessor::ModifyLanesUturn(const std::function<std::vector<const BevSplitInfo*>(uint64_t)>& LaneSplitGetter,
                                       const std::function<std::vector<const BevMergeInfo*>(uint64_t, bool)>& LaneMergeGetter,
                                       const std::function<LaneType(uint64_t)>& LaneTypeGetter,
                                       const std::shared_ptr<cem::message::env_model::RoutingMap>& ld_map,
@@ -1125,6 +1132,7 @@ void BevMapProcessor::DeleteLaneTopology(const std::function<std::vector<const B
                                       std::string& debug_infos) {
   constexpr float DistLatThreshold = 0.2;  // 掉头删除车道横向约束
   constexpr double DistLongThreshold = 20.0;  // 掉头删除车道纵向约束
+  constexpr double CosEgoUturnThreshold = 0.995;  // 掉头删除车道纵向约束
   std::string debug_str;
 
   if (data_ == nullptr || ld_map.get() == nullptr) {
@@ -1218,6 +1226,7 @@ void BevMapProcessor::DeleteLaneTopology(const std::function<std::vector<const B
   // }
   // AINFO << "uturn_ld_map id: " << lane_id_str.str();
 
+  // 1. 删除终点距离回头地图点一定纵向范围内，起点和ego_lane在同一条车道内，且向左弯曲的车道。
   // lane_id_str.str("");
   // lane_id_str.clear();
   for (const auto& u_turn_lane : u_turn_lanes) {
@@ -1233,26 +1242,34 @@ void BevMapProcessor::DeleteLaneTopology(const std::function<std::vector<const B
     u_turn_lane_dir = u_turn_lane_dir / u_turn_lane_dir.norm();
 
     double center2boundary_dist = CalculateCenterBoundaryDistanceFromMap(u_turn_lane, ld_map);
-    // AINFO << "uturn lane id: " << u_turn_lane.id << "; center2boundary_dist: " << center2boundary_dist;
+    AINFO << "uturn lane id: " << u_turn_lane.id << "; center2boundary_dist: " << center2boundary_dist;
 
     // 反向遍历：从最后一个元素到第一个
     for (int i = data_->lane_infos.size() - 1; i >= 0; --i) {
       topo_debug_info.clear();
-      auto& lane =  data_->lane_infos[i]; 
-      if (lane.line_points.size() < 2) {
-        continue;
-      }
-      // 首点距离约束
-      Eigen::Vector2d lane_start_vec;
-      lane_start_vec.x() = lane.line_points.front().x - u_turn_lane_end.x;
-      lane_start_vec.y() = lane.line_points.front().y - u_turn_lane_end.y;
-      double dist_lat_norm = (lane_start_vec - lane_start_vec.dot(u_turn_lane_dir) * u_turn_lane_dir).norm();
-      double dist_long_norm =  std::abs(lane_start_vec.dot(u_turn_lane_dir));
-      if (dist_long_norm > DistLongThreshold) {
+      auto& lane =  data_->lane_infos[i];
+
+      if (lane.position == 0) {
         continue;
       }
 
-      if (dist_lat_norm > center2boundary_dist + DistLatThreshold) {
+      if (lane.line_points.size() < 2) {
+        continue;
+      }
+
+      // 首尾点距离约束
+      Eigen::Vector2d lane_start_vec, lane_end_vec;
+      lane_start_vec.x() = lane.line_points.front().x - u_turn_lane_end.x;
+      lane_start_vec.y() = lane.line_points.front().y - u_turn_lane_end.y;
+      lane_end_vec.x() = lane.line_points.back().x - u_turn_lane_end.x;
+      lane_end_vec.y() = lane.line_points.back().y - u_turn_lane_end.y;
+      double dist_lat_norm_start = (lane_start_vec - lane_start_vec.dot(u_turn_lane_dir) * u_turn_lane_dir).norm();
+      double dist_long_norm_end =  std::abs(lane_end_vec.dot(u_turn_lane_dir));
+      if (dist_long_norm_end > DistLongThreshold) {
+        continue;
+      }
+
+      if (dist_lat_norm_start > center2boundary_dist + DistLatThreshold) {
         continue;
       }
 
@@ -1301,6 +1318,9 @@ void BevMapProcessor::DeleteLaneTopology(const std::function<std::vector<const B
     }
   }
   // AINFO << "target_delete_lane id: " << lane_id_str.str();
+  json points_debug_info;
+  const cem::message::env_model::LaneInfo* target_uturn_lane = nullptr;
+  double min_long_dist_end = std::numeric_limits<double>::max();
 
 # ifdef AddTopoDebug
   AINFO << "*******TopoAfterDelete******";
@@ -1324,6 +1344,84 @@ void BevMapProcessor::DeleteLaneTopology(const std::function<std::vector<const B
   }
   AINFO << "************************";
 # endif
+
+  // 2. 删除ego_lane的弯曲形点
+  if (ego_lane->line_points.size() < 2) {
+    return;
+  }
+
+  auto ego_lane_end = ego_lane->line_points.back();
+
+  // 找到与车道线end最近的uturn点，判定是否在需要改动尾部形点的阈值范围内。
+  for (const auto& u_turn_lane : u_turn_lanes) {
+    auto u_turn_lane_end = u_turn_lane.points.back();
+    auto u_turn_lane_second_end = u_turn_lane.points[u_turn_lane.points.size() - 2];
+    Eigen::Vector2d u_turn_lane_dir;
+    u_turn_lane_dir.x() = u_turn_lane_end.x - u_turn_lane_second_end.x;
+    u_turn_lane_dir.y() = u_turn_lane_end.y - u_turn_lane_second_end.y;
+    u_turn_lane_dir = u_turn_lane_dir / u_turn_lane_dir.norm();
+
+    Eigen::Vector2d ego_lane_end_vec;
+    ego_lane_end_vec.x() = ego_lane_end.x - u_turn_lane_end.x;
+    ego_lane_end_vec.y() = ego_lane_end.y - u_turn_lane_end.y;
+
+    double dist_long_norm =  std::abs(ego_lane_end_vec.dot(u_turn_lane_dir));
+
+    if (dist_long_norm < min_long_dist_end) {
+      min_long_dist_end = dist_long_norm;
+      target_uturn_lane = &u_turn_lane; // 记录当前车道的指针
+    }
+  }
+
+  if (min_long_dist_end > DistLongThreshold) {
+    return;
+  }
+
+  // AINFO << "target_uturn_lane: " << target_uturn_lane->id;
+  points_debug_info["target_uturn_lane id"] = target_uturn_lane->id;
+
+  auto target_uturn_lane_end = target_uturn_lane->points.back();
+  auto target_uturn_lane_second_end = target_uturn_lane->points[target_uturn_lane->points.size() - 2];
+  Eigen::Vector2d target_uturn_lane_dir;
+  target_uturn_lane_dir.x() = target_uturn_lane_end.x - target_uturn_lane_second_end.x;
+  target_uturn_lane_dir.y() = target_uturn_lane_end.y - target_uturn_lane_second_end.y;
+  target_uturn_lane_dir = target_uturn_lane_dir / target_uturn_lane_dir.norm();
+
+  int target_index = -1;  // 初始化目标索引为无效值
+  // 从末端向前遍历（i从最后一个点开始，到index=1停止）
+  for (int i = ego_lane->line_points.size() - 1; i >= 1; --i) {
+    const auto& curr_point = ego_lane->line_points[i];
+    const auto& prev_point = ego_lane->line_points[i - 1];  // 遍历方向的“前一个点”
+    Eigen::Vector2d ego_curr_vec;
+    ego_curr_vec.x() = curr_point.x - target_uturn_lane_end.x;
+    ego_curr_vec.y() = curr_point.y - target_uturn_lane_end.y;
+    double dist_long_norm_cur = ego_curr_vec.dot(target_uturn_lane_dir);
+    // 终止条件：点前ego_lane在uturn的投影小于阈值
+    if (dist_long_norm_cur < -DistLongThreshold) {
+        break;
+    }
+
+    Eigen::Vector2d ego_curr_dir;
+    ego_curr_dir.x() = curr_point.x - prev_point.x;
+    ego_curr_dir.y() = curr_point.y - prev_point.y;
+    double cos_curr_uturn = ego_curr_vec.dot(target_uturn_lane_dir);
+    // 找到第一个（最靠近末端）模长超过阈值的索引（仅记录第一个）
+    if (cos_curr_uturn < CosEgoUturnThreshold) {
+        target_index = i;
+    }
+  }
+
+  if (target_index < 3) {
+    return;
+  }
+
+  // AINFO << "target_index: " << target_index;
+  points_debug_info["target_ego_lane line_points index"] = target_index;
+  ego_lane->line_points.erase(ego_lane->line_points.begin() + target_index, ego_lane->line_points.end());
+  ego_lane->geos->erase(ego_lane->geos->begin() + target_index, ego_lane->geos->end());
+  debug_str = "";
+  debug_str = points_debug_info.dump();
+  debug_infos += debug_str;
 }
 
 navigation::EmergencyLaneInfo BevMapProcessor::GetEmergencyLaneInfo() {
@@ -7697,9 +7795,10 @@ double BevMapProcessor::CalculateCurvature(const cem::message::sensor::BevLaneIn
 
 bool BevMapProcessor::CheckLeftBending(const cem::message::sensor::BevLaneInfo& lane, json &topo_debug_info) {
   constexpr double eps = 1e-6;
-  constexpr double LeftCurvatureThreshold = -0.05;
+  constexpr double LeftCurvatureThreshold = -0.02;
   constexpr double LeftCountThreshold = 0.6;
   constexpr int CurvatureMinNum = 5;
+  constexpr int SampleNum = 15;
 
   // 点集数量不足，直接返回false
   if (lane.line_points.size() < 3) {
@@ -7712,8 +7811,14 @@ bool BevMapProcessor::CheckLeftBending(const cem::message::sensor::BevLaneInfo& 
   size_t right_count = 0;   // 向右弯曲点数量（k > eps_）
   size_t collinear_count = 0; // 近直线点数量（|k| ≤ eps_）
 
+  size_t start_idx = 1;
+  int point_count = lane.line_points.size();
+  if (point_count > SampleNum) {
+    start_idx = static_cast<size_t>(std::max(point_count - SampleNum, 1));
+  }
+
   // 遍历所有中间点计算曲率
-  for (size_t i = 1; i < lane.line_points.size() - 1; ++i) {
+  for (size_t i = start_idx; i < lane.line_points.size() - 1; ++i) {
       double k = CalculateCurvature(lane, i);
       curvatures.push_back(k);
 
@@ -7754,7 +7859,7 @@ bool BevMapProcessor::CheckLeftBending(const cem::message::sensor::BevLaneInfo& 
   stats["lane id"] =  lane.id;
   topo_debug_info["left bending check"] = stats;
 
-  // AINFO << stats.dump();
+  AINFO << stats.dump();
   return is_left;
 }
 

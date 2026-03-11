@@ -12,6 +12,7 @@
 #include "message/env_model/routing_map/routing_map.h"
 #include "message/env_model/speed_limit/speed_limit.h"
 #include "modules/msg/orin_msgs/routing_map.pb.h"
+#include "modules/perception/env/src/lib/message/env_model/speed_limit/speed_limit.h"
 
 namespace cem {
 namespace message {
@@ -395,25 +396,44 @@ struct BevMapRouteInfo {
   std::vector<BevMapSubPathInfo> subpaths   = {};
 };
 
+struct CrossPoint
+{
+    float x;
+    float y;
+    int   type{-1};//0:Y 1:Y reverse
+    int   index{-1};
+    //拷贝构造函数
+
+    CrossPoint& operator=(const CrossPoint &other){
+        x = other.x;
+        y = other.y;
+        type = other.type;
+        index = other.index;
+        return *this;
+    };
+};
+
 struct BevMapInfo {
   cem::message::common::Header     header;
-  int32_t                          frame_id         = 0;
-  uint16_t                         lanemarkers_num  = 0;
-  uint16_t                         edge_num         = 0;
-  bool                             is_local_pose    = false;
-  bool                             is_on_highway    = false;
-  MapType                          map_type         = MapType::UNKOWN_MAP;
-  RoadClass                        road_class       = RoadClass::UNKNOWN;
-  std::vector<BevLaneMarker>       lanemarkers      = {};  // lane
-  std::vector<BevLaneMarker>       edges            = {};
-  std::vector<BevLaneInfo>         lane_infos       = {};  // lane center
-  std::vector<BevLaneMarker>       stop_lines       = {};
-  std::vector<BevLaneMarker>       crosswalks       = {};
-  std::vector<BevLaneMarker>       arrows           = {};
-  std::vector<BevLaneMarker>       junctions        = {};
-  std::vector<BevLaneMarker>       diversion_zone   = {};
-  BevMapRouteInfo                  route            = {};
-  env_model::FusionSpeedInfo       speed_info       = {};
+  int32_t                          frame_id        = 0;
+  uint16_t                         lanemarkers_num = 0;
+  uint16_t                         edge_num        = 0;
+  bool                             is_local_pose   = false;
+  bool                             is_on_highway   = false;
+  MapType                          map_type        = MapType::UNKOWN_MAP;
+  RoadClass                        road_class      = RoadClass::UNKNOWN;
+  std::vector<BevLaneMarker>       lanemarkers     = {};  // lane
+  std::vector<BevLaneMarker>       edges           = {};
+  std::vector<BevLaneInfo>         lane_infos      = {};  // lane center
+  std::vector<BevLaneMarker>       stop_lines      = {};
+  std::vector<BevLaneMarker>       crosswalks      = {};
+  std::vector<BevLaneMarker>       arrows          = {};
+  std::vector<BevLaneMarker>       junctions       = {};
+  std::vector<BevLaneMarker>       diversion_zone  = {};
+  std::vector<BevLaneMarker>       intersection_zone = {};
+  std::vector<CrossPoint>          cross_points    = {};
+  BevMapRouteInfo                  route           = {};
+  cem::message::env_model::FusionSpeedInfo                  speed_info = {};
   cem::message::env_model::EnvInfo env_info;
   std::string debug_infos = "";
 };

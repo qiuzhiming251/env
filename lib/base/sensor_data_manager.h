@@ -42,15 +42,18 @@ private:
                std::shared_ptr<Sensor<PlanFuncStatePtr>>,
                std::shared_ptr<Sensor<CAN1Ptr>>,
                std::shared_ptr<Sensor<OCCInfoPtr>>,
-               std::shared_ptr<Sensor<SdTrafficLightPtr>>,
+               std::shared_ptr<Sensor<SDTrafficLightPtr>>,
+               std::shared_ptr<Sensor<E2eMapPtr>>,
+               std::shared_ptr<Sensor<E2EMapRawPtr>>,
+               std::shared_ptr<Sensor<E2EResultRawPtr>>,
+               std::shared_ptr<Sensor<TopStatePtr>>,
                std::shared_ptr<Sensor<MapMatchResultPtr>>,
                std::shared_ptr<Sensor<VisionTrfInfoPtr>>,
                std::shared_ptr<Sensor<NaviTrafficInfoPtr>>,
-               std::shared_ptr<Sensor<DriversEventPtr>>,
-               std::shared_ptr<Sensor<MapMatchResultBaiduPtr>>>
+               std::shared_ptr<Sensor<DriversEventPtr>>>
         sensors_;
 
-private:
+   private:
     /**
      * @brief Just for Reset method.
      *

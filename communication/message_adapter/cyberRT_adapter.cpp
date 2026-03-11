@@ -1131,7 +1131,7 @@ void AdaptInput2Internal(const std::shared_ptr<byd::msg::env_model::LocalMapInfo
 
   Eigen::Isometry3d T_local_ego = Eigen::Isometry3d::Identity();
   Eigen::Isometry3d T_ego_local = Eigen::Isometry3d::Identity();
-#ifdef BYD_X2B
+#if defined(BYD_VCPB) || defined(BYD_X2B)
   LocalizationPtr odom_now_ptr{nullptr};
   SensorDataManager::Instance()->GetLatestSensorFrame(adapted_bev_lane->header.timestamp, 0.05, odom_now_ptr);
   if (odom_now_ptr == nullptr) {
@@ -1182,7 +1182,7 @@ void AdaptInput2Internal(const std::shared_ptr<byd::msg::env_model::LocalMapInfo
       adapted_lane_marker->line_points.emplace_back(Point2DF());
       auto           &adapted_point = adapted_lane_marker->line_points.back();
       Eigen::Vector3d point_3d(point.x(), point.y(), 0);
-#ifdef BYD_X2B
+#if defined(BYD_VCPB) || defined(BYD_X2B)
       point_3d = T_ego_local * point_3d;
 #endif
       adapted_point.x            = point_3d.x();
@@ -1249,7 +1249,9 @@ void AdaptInput2Internal(const std::shared_ptr<byd::msg::env_model::LocalMapInfo
       adapted_bev_lane->diversion_zone.emplace_back(BevLaneMarker());
       auto &adapted_diversion_zone = adapted_bev_lane->diversion_zone.back();
       AdaptInput_LaneMarker(lane_marker, &adapted_diversion_zone, T_ego_local);
-      adapted_diversion_zone.id = adapted_diversion_zone.id + 100;
+      adapted_bev_lane->intersection_zone.emplace_back(BevLaneMarker());
+      auto &intersection_zone = adapted_bev_lane->intersection_zone.back();
+      AdaptInput_LaneMarker(lane_marker, &intersection_zone, T_ego_local);
     } else {
       adapted_bev_lane->lanemarkers.emplace_back(BevLaneMarker());
       auto &adapted_lane_marker = adapted_bev_lane->lanemarkers.back();
@@ -1299,7 +1301,7 @@ void AdaptInput2Internal(const std::shared_ptr<byd::msg::env_model::LocalMapInfo
       auto           &adapted_point = adapted_lane->line_points.back();
       const auto     &point         = raw_lane.polyline()[idx];
       Eigen::Vector3d point_3d(point.x(), point.y(), 0);
-#ifdef BYD_X2B
+#if defined(BYD_VCPB) || defined(BYD_X2B)
       point_3d = T_ego_local * point_3d;
 #endif
       adapted_point.x   = point_3d.x();
@@ -1334,7 +1336,7 @@ void AdaptInput2Internal(const std::shared_ptr<byd::msg::env_model::LocalMapInfo
       adapted_lane_info->line_points.emplace_back(Point2DF());
       auto           &adapted_point = adapted_lane_info->line_points.back();
       Eigen::Vector3d point_3d(point.x(), point.y(), 0);
-#ifdef BYD_X2B
+#if defined(BYD_VCPB) || defined(BYD_X2B)
       point_3d = T_ego_local * point_3d;
 #endif
       adapted_point.x = point_3d.x();
@@ -1529,12 +1531,10 @@ void AdaptInput2Internal(const std::shared_ptr<byd::msg::perception::PerceptionT
     adapted_percep_trf_obj.exist_score                       = raw_percep_trf_object.exist_score();
     adapted_percep_trf_obj.track_age                         = raw_percep_trf_object.track_age();
     adapted_percep_trf_obj.track_status = static_cast<cem::message::sensor::TrackStatus>(raw_percep_trf_object.track_status());
-    adapted_percep_trf_obj.direction_conf = raw_percep_trf_object.attributes().traffic_light_direction_conf();
-    adapted_percep_trf_obj.shape_conf = raw_percep_trf_object.attributes().traffic_light_shape_conf();
-    adapted_percep_trf_obj.traffic_light_box_id = raw_percep_trf_object.traffic_light_box_id();
-    adapted_percep_trf_obj.is_occluded          = raw_percep_trf_object.attributes().is_occluded();
-    adapted_percep_trf_obj.yellow_flashing_start_time = raw_percep_trf_object.attributes().yellow_flashing_start_time();
-    adapted_percep_trf_obj.det_source = static_cast<cem::message::sensor::DetectionSource>(raw_percep_trf_object.det_source());
+    adapted_percep_trf_obj.attributes.traffic_light_direction_conf = raw_percep_trf_object.attributes().traffic_light_direction_conf();
+    adapted_percep_trf_obj.attributes.traffic_light_shape_conf     = raw_percep_trf_object.attributes().traffic_light_shape_conf();
+    adapted_percep_trf_obj.attributes.traffic_light_color_conf     = raw_percep_trf_object.attributes().traffic_light_color_conf();
+        // adapted_percep_trf_obj.attributes.is_occluded = raw_percep_trf_object.attributes().is_occluded();
     // AINFO<<"tsr perception_traffic_info id: "<<adapted_percep_trf_obj.id<<" type: "<<adapted_percep_trf_obj.type;
 
     // AINFO<<"tsr perception_traffic_info attr spd_restrict_type:"<<adapted_percep_trf_obj.attributes.speed_restriction_type
@@ -1688,10 +1688,377 @@ void AdaptInput2Internal(const std::shared_ptr<byd::msg::env_model::LocalMapInfo
     return;
   };
 
-  for (const auto &edge : raw_lidar_roadedge_info->road_edges()) {
-    adapted_lidar_roadedge_info->edges.emplace_back(BevLaneMarker());
-    auto &adapted_edge = adapted_lidar_roadedge_info->edges.back();
-    AdaptInput_Edge(edge, &adapted_edge);
+    for (const auto &edge : raw_lidar_roadedge_info->road_edges())
+    {
+        adapted_lidar_roadedge_info->edges.emplace_back(BevLaneMarker());
+        auto &adapted_edge = adapted_lidar_roadedge_info->edges.back();
+        int   poly_size    = edge.polyline().size();
+        AdaptInput_Edge(edge, &adapted_edge);
+    }
+}
+
+/* E2EMap */
+void AdaptInput2Internal(
+    const std::shared_ptr<byd::msg::orin::e2e_map::E2EMap> &raw_e2e_map_info,
+    E2eMapPtr adapted_e2e_map_info) {
+  if (!raw_e2e_map_info) {
+    return;
+  }
+  adapted_e2e_map_info->header.timestamp =
+      raw_e2e_map_info->header().measurement_timestamp();
+  adapted_e2e_map_info->header.recv_timestamp = GetMwTimeNowSec();
+  adapted_e2e_map_info->header.cycle_counter =
+      raw_e2e_map_info->header().sequence_num();
+
+  adapted_e2e_map_info->map_info.coord_sys =
+      static_cast<cem::message::sensor::E2eCoordSys>(
+          raw_e2e_map_info->map_info().coord_sys());
+  adapted_e2e_map_info->map_info.map_version =
+      raw_e2e_map_info->map_info().map_version();
+  adapted_e2e_map_info->map_info.engine_version =
+      raw_e2e_map_info->map_info().engine_version();
+  adapted_e2e_map_info->map_info.sdmap_version =
+      raw_e2e_map_info->map_info().sdmap_version();
+
+  adapted_e2e_map_info->navi_stat =
+      static_cast<cem::message::sensor::E2eNaviStatus>(
+          raw_e2e_map_info->navi_stat());
+
+  for (const auto &action : raw_e2e_map_info->navi_action()) {
+    E2eNaviActionInfo e2e_action;
+    e2e_action.main_action =
+        static_cast<cem::message::sensor::E2eNaviMainAction>(
+            action.main_action());
+    e2e_action.assistant_action =
+        static_cast<cem::message::sensor::E2eNaviAssistantAction>(
+            action.assistant_action());
+    e2e_action.action_dis = action.action_dis();
+    adapted_e2e_map_info->navi_action.emplace_back(e2e_action);
+  }
+
+  for (const auto &remain_dis : raw_e2e_map_info->remain_dis_info()) {
+    E2eRemainDistanceInfo e2e_remain_dis;
+    e2e_remain_dis.remain_dis_type =
+        static_cast<cem::message::sensor::E2eRemainDistanceInfo::E2eRemainType>(
+            remain_dis.remain_dis_type());
+    e2e_remain_dis.remain_dis = remain_dis.remain_dis();
+    adapted_e2e_map_info->remain_dis_info.emplace_back(e2e_remain_dis);
+  }
+
+  adapted_e2e_map_info->route_info.id = raw_e2e_map_info->route_info().id();
+  adapted_e2e_map_info->route_info.navi_start.section_id =
+      raw_e2e_map_info->route_info().navi_start().section_id();
+  adapted_e2e_map_info->route_info.navi_start.s_offset =
+      raw_e2e_map_info->route_info().navi_start().s_offset();
+
+  for (const auto &road_class :
+       raw_e2e_map_info->route_info().mpp_info().road_class_info()) {
+    E2eRoadClassInfo e2e_road_class;
+    e2e_road_class.road_class =
+        static_cast<cem::message::sensor::E2eRoadClassType>(
+            road_class.road_class());
+    e2e_road_class.dis = road_class.dis();
+    adapted_e2e_map_info->route_info.mpp_info.road_class_info.emplace_back(
+        e2e_road_class);
+  }
+
+  for (const auto &lane_num :
+       raw_e2e_map_info->route_info().mpp_info().lane_num_info()) {
+    E2eLaneNumInfo e2e_lane_num;
+    e2e_lane_num.lane_num = lane_num.lane_num();
+    e2e_lane_num.dis = lane_num.dis();
+    adapted_e2e_map_info->route_info.mpp_info.lane_num_info.emplace_back(
+        e2e_lane_num);
+  }
+
+  for (const auto &shape_point :
+       raw_e2e_map_info->route_info().mpp_info().shape_points()) {
+    E2ePoint e2e_shape_point;
+    e2e_shape_point.x = shape_point.x();
+    e2e_shape_point.y = shape_point.y();
+    e2e_shape_point.z = shape_point.z();
+    e2e_shape_point.curvature = shape_point.curvature();
+    adapted_e2e_map_info->route_info.mpp_info.shape_points.emplace_back(
+        e2e_shape_point);
+  }
+
+  for (const auto &speed_limit :
+       raw_e2e_map_info->route_info().mpp_info().speed_limit_info()) {
+    E2eSpeedLimitInfo e2e_speed_limit;
+    e2e_speed_limit.speed_limit = speed_limit.speed_limit();
+    e2e_speed_limit.dis = speed_limit.dis();
+    adapted_e2e_map_info->route_info.mpp_info.speed_limit_info.emplace_back(
+        e2e_speed_limit);
+  }
+
+  for (const auto &formway :
+       raw_e2e_map_info->route_info().mpp_info().formway_info()) {
+    E2eFormwayInfo e2e_formway;
+    e2e_formway.formway = formway.formway();
+    e2e_formway.dis = formway.dis();
+    adapted_e2e_map_info->route_info.mpp_info.formway_info.emplace_back(
+        e2e_formway);
+  }
+
+  for (const auto &direction :
+       raw_e2e_map_info->route_info().mpp_info().direction_info()) {
+    E2eDirectionInfo e2e_direction;
+    e2e_direction.direction_type =
+        static_cast<cem::message::sensor::E2eDirectionType>(
+            direction.direction_type());
+    e2e_direction.dis = direction.dis();
+    adapted_e2e_map_info->route_info.mpp_info.direction_info.emplace_back(
+        e2e_direction);
+  }
+
+  for (const auto &reminder_toll_booth :
+       raw_e2e_map_info->route_info().mpp_info().reminder_toll_booth_info()) {
+    E2eReminderSceneInfo e2e_reminder_toll_booth;
+    e2e_reminder_toll_booth.type =
+        static_cast<cem::message::sensor::E2eReminderSceneType>(
+            reminder_toll_booth.type());
+    e2e_reminder_toll_booth.dis = reminder_toll_booth.dis();
+    adapted_e2e_map_info->route_info.mpp_info.reminder_toll_booth_info
+        .emplace_back(e2e_reminder_toll_booth);
+  }
+
+  for (const auto &reminder_ic_or_jct :
+       raw_e2e_map_info->route_info().mpp_info().reminder_ic_or_jct_info()) {
+    E2eReminderSceneInfo e2e_reminder_ic_or_jct;
+    e2e_reminder_ic_or_jct.type =
+        static_cast<cem::message::sensor::E2eReminderSceneType>(
+            reminder_ic_or_jct.type());
+    e2e_reminder_ic_or_jct.dis = reminder_ic_or_jct.dis();
+    adapted_e2e_map_info->route_info.mpp_info.reminder_ic_or_jct_info
+        .emplace_back(e2e_reminder_ic_or_jct);
+  }
+
+  for (const auto &reminder_tunnel :
+       raw_e2e_map_info->route_info().mpp_info().reminder_tunnel_info()) {
+    E2eReminderSceneInfo e2e_reminder_tunnel;
+    e2e_reminder_tunnel.type =
+        static_cast<cem::message::sensor::E2eReminderSceneType>(
+            reminder_tunnel.type());
+    e2e_reminder_tunnel.dis = reminder_tunnel.dis();
+    adapted_e2e_map_info->route_info.mpp_info.reminder_tunnel_info.emplace_back(
+        e2e_reminder_tunnel);
+  }
+
+  for (const auto &reminder_bridge :
+       raw_e2e_map_info->route_info().mpp_info().reminder_bridge_info()) {
+    E2eReminderSceneInfo e2e_reminder_bridge;
+    e2e_reminder_bridge.type =
+        static_cast<cem::message::sensor::E2eReminderSceneType>(
+            reminder_bridge.type());
+    e2e_reminder_bridge.dis = reminder_bridge.dis();
+    adapted_e2e_map_info->route_info.mpp_info.reminder_bridge_info.emplace_back(
+        e2e_reminder_bridge);
+  }
+
+  for (const auto &reminder_junction :
+       raw_e2e_map_info->route_info().mpp_info().reminder_junction_info()) {
+    E2eReminderSceneInfo e2e_reminder_junction;
+    e2e_reminder_junction.type =
+        static_cast<cem::message::sensor::E2eReminderSceneType>(
+            reminder_junction.type());
+    e2e_reminder_junction.dis = reminder_junction.dis();
+    adapted_e2e_map_info->route_info.mpp_info.reminder_junction_info
+        .emplace_back(e2e_reminder_junction);
+  }
+
+  for (const auto &lane_group :
+       raw_e2e_map_info->route_info().mpp_info().lane_group_info()) {
+    E2eLaneGroupInfo e2e_lane_group;
+    for (const auto &lane : lane_group.lane_info()) {
+      E2eLaneInfo e2e_lane;
+      e2e_lane.lane_seq = lane.lane_seq();
+      e2e_lane.lane_type =
+          static_cast<cem::message::sensor::E2eLaneType>(lane.lane_type());
+      e2e_lane.turn_type =
+          static_cast<cem::message::sensor::E2eTurnType>(lane.turn_type());
+      e2e_lane.plan_turn_type =
+          static_cast<cem::message::sensor::E2eTurnType>(lane.plan_turn_type());
+      for (const auto &next_lane : lane.next_lane_seq()) {
+        e2e_lane.next_lane_seq.push_back(next_lane);
+      }
+      for (const auto &previous_lane : lane.previous_lane_seq()) {
+        e2e_lane.previous_lane_seq.push_back(previous_lane);
+      }
+      e2e_lane.split_topology =
+          static_cast<cem::message::sensor::E2eSplitTopology>(
+              lane.split_topology());
+      e2e_lane.merge_topology =
+          static_cast<cem::message::sensor::E2eMergeTopology>(
+              lane.merge_topology());
+      e2e_lane.id = lane.id();
+      e2e_lane_group.lane_info.push_back(e2e_lane);
+    }
+    e2e_lane_group.dis = lane_group.dis();
+    e2e_lane_group.id = lane_group.id();
+    for (const auto &next_lane : lane_group.next_lane_group()) {
+      e2e_lane_group.next_lane_group.emplace_back(next_lane);
+    }
+    for (const auto &previous_lane : lane_group.previous_lane_group()) {
+      e2e_lane_group.previous_lane_group.emplace_back(previous_lane);
+    }
+
+    adapted_e2e_map_info->route_info.mpp_info.lane_group_info.emplace_back(
+        e2e_lane_group);
+  }
+
+  for (const auto &subpath : raw_e2e_map_info->route_info().subpaths()) {
+    E2eSubPathInfo e2e_subpath;
+    e2e_subpath.dis = subpath.dis();
+
+    for (const auto &road_class : subpath.subpath().road_class_info()) {
+      E2eRoadClassInfo e2e_road_class;
+      e2e_road_class.road_class =
+          static_cast<cem::message::sensor::E2eRoadClassType>(
+              road_class.road_class());
+      e2e_road_class.dis = road_class.dis();
+      e2e_subpath.subpath.road_class_info.emplace_back(e2e_road_class);
+    }
+
+    for (const auto &lane_num : subpath.subpath().lane_num_info()) {
+      E2eLaneNumInfo e2e_lane_num;
+      e2e_lane_num.lane_num = lane_num.lane_num();
+      e2e_lane_num.dis = lane_num.dis();
+      e2e_subpath.subpath.lane_num_info.emplace_back(e2e_lane_num);
+    }
+
+    for (const auto &shape_point : subpath.subpath().shape_points()) {
+      E2ePoint e2e_shape_point;
+      e2e_shape_point.x = shape_point.x();
+      e2e_shape_point.y = shape_point.y();
+      e2e_shape_point.z = shape_point.z();
+      e2e_shape_point.curvature = shape_point.curvature();
+      e2e_subpath.subpath.shape_points.emplace_back(e2e_shape_point);
+    }
+
+    for (const auto &speed_limit : subpath.subpath().speed_limit_info()) {
+      E2eSpeedLimitInfo e2e_speed_limit;
+      e2e_speed_limit.speed_limit = speed_limit.speed_limit();
+      e2e_speed_limit.dis = speed_limit.dis();
+      e2e_subpath.subpath.speed_limit_info.emplace_back(e2e_speed_limit);
+    }
+
+    for (const auto &formway : subpath.subpath().formway_info()) {
+      E2eFormwayInfo e2e_formway;
+      e2e_formway.formway = formway.formway();
+      e2e_formway.dis = formway.dis();
+      e2e_subpath.subpath.formway_info.emplace_back(e2e_formway);
+    }
+
+    for (const auto &direction : subpath.subpath().direction_info()) {
+      E2eDirectionInfo e2e_direction;
+      e2e_direction.direction_type =
+          static_cast<cem::message::sensor::E2eDirectionType>(
+              direction.direction_type());
+      e2e_direction.dis = direction.dis();
+      e2e_subpath.subpath.direction_info.emplace_back(e2e_direction);
+    }
+
+    for (const auto &reminder_toll_booth :
+         subpath.subpath().reminder_toll_booth_info()) {
+      E2eReminderSceneInfo e2e_reminder_toll_booth;
+      e2e_reminder_toll_booth.type =
+          static_cast<cem::message::sensor::E2eReminderSceneType>(
+              reminder_toll_booth.type());
+      e2e_reminder_toll_booth.dis = reminder_toll_booth.dis();
+      e2e_subpath.subpath.reminder_toll_booth_info.emplace_back(
+          e2e_reminder_toll_booth);
+    }
+
+    for (const auto &reminder_ic_or_jct :
+         subpath.subpath().reminder_ic_or_jct_info()) {
+      E2eReminderSceneInfo e2e_reminder_ic_or_jct;
+      e2e_reminder_ic_or_jct.type =
+          static_cast<cem::message::sensor::E2eReminderSceneType>(
+              reminder_ic_or_jct.type());
+      e2e_reminder_ic_or_jct.dis = reminder_ic_or_jct.dis();
+      e2e_subpath.subpath.reminder_ic_or_jct_info.emplace_back(
+          e2e_reminder_ic_or_jct);
+    }
+
+    for (const auto &reminder_tunnel :
+         subpath.subpath().reminder_tunnel_info()) {
+      E2eReminderSceneInfo e2e_reminder_tunnel;
+      e2e_reminder_tunnel.type =
+          static_cast<cem::message::sensor::E2eReminderSceneType>(
+              reminder_tunnel.type());
+      e2e_reminder_tunnel.dis = reminder_tunnel.dis();
+      e2e_subpath.subpath.reminder_tunnel_info.emplace_back(
+          e2e_reminder_tunnel);
+    }
+
+    for (const auto &reminder_bridge :
+         subpath.subpath().reminder_bridge_info()) {
+      E2eReminderSceneInfo e2e_reminder_bridge;
+      e2e_reminder_bridge.type =
+          static_cast<cem::message::sensor::E2eReminderSceneType>(
+              reminder_bridge.type());
+      e2e_reminder_bridge.dis = reminder_bridge.dis();
+      e2e_subpath.subpath.reminder_bridge_info.emplace_back(
+          e2e_reminder_bridge);
+    }
+
+    for (const auto &reminder_junction :
+         subpath.subpath().reminder_junction_info()) {
+      E2eReminderSceneInfo e2e_reminder_junction;
+      e2e_reminder_junction.type =
+          static_cast<cem::message::sensor::E2eReminderSceneType>(
+              reminder_junction.type());
+      e2e_reminder_junction.dis = reminder_junction.dis();
+      e2e_subpath.subpath.reminder_junction_info.emplace_back(
+          e2e_reminder_junction);
+    }
+
+    for (const auto &lane_group : subpath.subpath().lane_group_info()) {
+      E2eLaneGroupInfo e2e_lane_group;
+      for (const auto &lane : lane_group.lane_info()) {
+        E2eLaneInfo e2e_lane;
+        e2e_lane.lane_seq = lane.lane_seq();
+        e2e_lane.lane_type =
+            static_cast<cem::message::sensor::E2eLaneType>(lane.lane_type());
+        e2e_lane.turn_type =
+            static_cast<cem::message::sensor::E2eTurnType>(lane.turn_type());
+        e2e_lane.plan_turn_type =
+            static_cast<cem::message::sensor::E2eTurnType>(
+                lane.plan_turn_type());
+        for (const auto &next_lane : lane.next_lane_seq()) {
+          e2e_lane.next_lane_seq.push_back(next_lane);
+        }
+        for (const auto &previous_lane : lane.previous_lane_seq()) {
+          e2e_lane.previous_lane_seq.push_back(previous_lane);
+        }
+        e2e_lane.split_topology =
+            static_cast<cem::message::sensor::E2eSplitTopology>(
+                lane.split_topology());
+        e2e_lane.merge_topology =
+            static_cast<cem::message::sensor::E2eMergeTopology>(
+                lane.merge_topology());
+        e2e_lane.id = lane.id();
+        e2e_lane_group.lane_info.push_back(e2e_lane);
+      }
+      e2e_lane_group.dis = lane_group.dis();
+      e2e_lane_group.id = lane_group.id();
+      for (const auto &next_lane : lane_group.next_lane_group()) {
+        e2e_lane_group.next_lane_group.emplace_back(next_lane);
+      }
+      for (const auto &previous_lane : lane_group.previous_lane_group()) {
+        e2e_lane_group.previous_lane_group.emplace_back(previous_lane);
+      }
+
+      e2e_subpath.subpath.lane_group_info.emplace_back(e2e_lane_group);
+    }
+    e2e_subpath.path_type =
+        static_cast<cem::message::sensor::E2eSubPathInfo::E2ePathType>(
+            subpath.path_type());
+    for (const auto &enter_lane_seq : subpath.enter_lane_seq()) {
+      e2e_subpath.enter_lane_seq.emplace_back(enter_lane_seq);
+    }
+    e2e_subpath.path_id = subpath.path_id();
+    adapted_e2e_map_info->route_info.subpaths.emplace_back(e2e_subpath);
   }
 }
 
@@ -1746,13 +2113,36 @@ void AdaptInput2Internal(const std::shared_ptr<byd::msg::perception::OCCInfo> &m
   occInfo->occ_mask.veh_pos_x               = msg->occ_mask().veh_pos_x();
   occInfo->occ_mask.veh_pos_y               = msg->occ_mask().veh_pos_y();
 
-  occInfo->occ_mask.rle_units.resize(msg->occ_mask().rle_units().size());
-  for (int idx = 0; idx < msg->occ_mask().rle_units().size(); idx++) {
-    auto &adapted_unit = occInfo->occ_mask.rle_units[idx];
-    adapted_unit.value = msg->occ_mask().rle_units()[idx].value();
-    adapted_unit.count = msg->occ_mask().rle_units()[idx].count();
+    occInfo->occ_mask.rle_units.resize(msg->occ_mask().rle_units().size());
+    for (int idx = 0; idx < msg->occ_mask().rle_units().size(); idx++) {
+      auto &adapted_unit = occInfo->occ_mask.rle_units[idx];
+      adapted_unit.value = msg->occ_mask().rle_units()[idx].value();
+      adapted_unit.count = msg->occ_mask().rle_units()[idx].count();
+    }
+
+
+
+}
+
+void AdaptInput2Internal(const std::shared_ptr<byd::msg::state_machine::TopState> &raw_top_state, TopStatePtr adapted_top_state) {
+  auto *header                           = &adapted_top_state->header;
+  header->sequence_num                   = raw_top_state->header().sequence_num();
+  header->timestamp                      = raw_top_state->header().measurement_timestamp();
+  header->recv_timestamp                 = GetMwTimeNowSec();
+  adapted_top_state->odd_type            = static_cast<OddType>(raw_top_state->odd_type());
+  switch (raw_top_state->state()) {
+    case ::byd::msg::state_machine::TopState_State::TopState_State_DEFAULT:
+      adapted_top_state->state_type = StateType::DEFAULT;
+      break;
+    case ::byd::msg::state_machine::TopState_State::TopState_State_ADAS:
+      adapted_top_state->state_type = StateType::ADAS;
+      break;
+    default:
+      adapted_top_state->state_type = StateType::OTHER;
+      break;
   }
 }
+
 /******************************************************************************/
 void AdaptInternal2Output(const MapInfo &raw_map_info, byd::msg::orin::routing_map::MapInfo *adapted_map_info) {
   adapted_map_info->set_map_version(raw_map_info.map_version);
@@ -1783,12 +2173,7 @@ void AdaptInternal2Output(const LaneInfo &lane, byd::msg::orin::routing_map::Lan
   adapted_lane->clear_next_lane_ids();
   adapted_lane->mutable_next_lane_ids()->Reserve(lane.next_lane_ids.size());
   adapted_lane->set_stopline_angle_flag(lane.stopline_angle_flag);
-  adapted_lane->set_distance_to_stopline(lane.distance_to_stopline);
-  adapted_lane->set_cloud_junction_type(lane.cloud_junction_type);
-  adapted_lane->set_traffic_match_cloud_file(lane.traffic_match_cloud_file);
-  adapted_lane->mutable_light_info()->set_prev_has_light_now_no(lane.light_info.prev_has_light_now_no);
-  adapted_lane->mutable_light_info()->set_maybe_exist_light(lane.light_info.maybe_exist_light);
-  adapted_lane->mutable_light_info()->set_yellow_flashing_start_time(lane.yellow_flashing_start_time);
+  // adapted_lane->mutable_light_info()->set_prev_has_light_now_no(lane.light_info.prev_has_light_now_no);
   for (const auto &nextId : lane.next_lane_ids) {
     adapted_lane->add_next_lane_ids(nextId);
   }
@@ -2277,36 +2662,42 @@ void AdaptInternal2Output(RoutingMapPtr routingMap, std::shared_ptr<byd::msg::or
   //DebugInfo
   adapted_routing_map->set_debug_info(routingMap->debug_infos);
 }
+
 // 转换发送到端到端的红绿灯信息
-void AdaptInternal2Output(const TrafficLightsE2EInfoPtr                                      traffic_lights_e2e,
-                          std::shared_ptr<byd::msg::orin::routing_map::TrafficLightsE2EInfo> adapted_traffic_lights_e2e) {
-  adapted_traffic_lights_e2e->mutable_header()->set_measurement_timestamp(GetMwTimeNowSec());
-  adapted_traffic_lights_e2e->mutable_header()->set_frame_id("dr");
-  adapted_traffic_lights_e2e->clear_traffic_status();
-  for (const auto &traffic_light : traffic_lights_e2e->traffic_status) {
-    auto *adapted_traffic_light = adapted_traffic_lights_e2e->add_traffic_status();
-    adapted_traffic_light->set_light_status(static_cast<byd::msg::orin::routing_map::LightStatus>(traffic_light.light_status));
-    adapted_traffic_light->set_turn_type(static_cast<byd::msg::orin::routing_map::LaneInfo_TurnType>(traffic_light.turn_type));
-    for (const auto &point : traffic_light.stop_line_pts) {
-      AdaptInternal2Output(point, adapted_traffic_light->add_stop_line_pts());
+void AdaptInternal2Output(const TrafficLightsE2EInfoPtr traffic_lights_e2e,
+                          std::shared_ptr<byd::msg::orin::routing_map::TrafficLightsE2EInfo> adapted_traffic_lights_e2e)
+{
+    adapted_traffic_lights_e2e->mutable_header()->set_measurement_timestamp(GetMwTimeNowSec());
+    adapted_traffic_lights_e2e->mutable_header()->set_frame_id("dr");
+    adapted_traffic_lights_e2e->clear_traffic_status();
+    for (const auto &traffic_light : traffic_lights_e2e->traffic_status) {
+      auto *adapted_traffic_light = adapted_traffic_lights_e2e->add_traffic_status();
+      adapted_traffic_light->set_light_status(
+          static_cast<byd::msg::orin::routing_map::LightStatus>(traffic_light.light_status));
+      adapted_traffic_light->set_turn_type(
+          static_cast<byd::msg::orin::routing_map::LaneInfo_TurnType>(traffic_light.turn_type));
+      for (const auto &point : traffic_light.stop_line_pts) {
+        AdaptInternal2Output(point, adapted_traffic_light->add_stop_line_pts());
+      }
+      for (const auto &point : traffic_light.stop_line_pts_wait) {
+        AdaptInternal2Output(point, adapted_traffic_light->add_stop_line_pts_wait());
+      }
+      adapted_traffic_light->set_traffic_light_num(traffic_light.traffic_light_num);
+      adapted_traffic_light->set_is_navi_light(traffic_light.is_navi_light);
+      adapted_traffic_light->set_stopline_is_virtual(traffic_light.stopline_is_virtual);
+      adapted_traffic_light->set_distance_to_stopline(traffic_light.distance_to_stopline);
+      adapted_traffic_light->set_traffic_match_cloud_file(traffic_light.traffic_match_cloud_file);
+      adapted_traffic_light->set_distance_to_stopline(traffic_light.distance_to_stopline);
+      adapted_traffic_light->set_traffic_match_cloud_file(traffic_light.traffic_match_cloud_file);
     }
-    for (const auto &point : traffic_light.stop_line_pts_wait) {
-      AdaptInternal2Output(point, adapted_traffic_light->add_stop_line_pts_wait());
+    adapted_traffic_lights_e2e->clear_traffic_lights();
+    for (const auto &light : traffic_lights_e2e->traffic_lights) {
+      AdaptInternal2Output(light, adapted_traffic_lights_e2e->add_traffic_lights());
     }
-    adapted_traffic_light->set_traffic_light_num(traffic_light.traffic_light_num);
-    adapted_traffic_light->set_is_navi_light(traffic_light.is_navi_light);
-    adapted_traffic_light->set_stopline_is_virtual(traffic_light.stopline_is_virtual);
-    adapted_traffic_light->set_distance_to_stopline(traffic_light.distance_to_stopline);
-    adapted_traffic_light->set_traffic_match_cloud_file(traffic_light.traffic_match_cloud_file);
-  }
-  adapted_traffic_lights_e2e->clear_traffic_lights();
-  for (const auto &light : traffic_lights_e2e->traffic_lights) {
-    AdaptInternal2Output(light, adapted_traffic_lights_e2e->add_traffic_lights());
-  }
-  auto *pose = adapted_traffic_lights_e2e->mutable_pose();
-  pose->set_x(traffic_lights_e2e->pose.x);
-  pose->set_y(traffic_lights_e2e->pose.y);
-  pose->set_z(traffic_lights_e2e->pose.z);
+    auto *pose = adapted_traffic_lights_e2e->mutable_pose();
+    pose->set_x(traffic_lights_e2e->pose.x);
+    pose->set_y(traffic_lights_e2e->pose.y);
+    pose->set_z(traffic_lights_e2e->pose.z);
 }
 
 /***************************************************************/
@@ -2434,11 +2825,11 @@ void AdaptInternal2Output(const BevMapInfoPtr bev_map_ptr, const std::vector<cem
       adapted_lane_info->set_is_acc_adj_lane(lane.is_acc_adj_lane);
 
       if (lane.is_acc_adj_lane) {
-        adapted_lane_info->set_merge_start_dis(lane.merge_start_dis);
-        adapted_lane_info->set_merge_end_dis(lane.merge_end_dis);
+        // adapted_lane_info->set_merge_start_dis(lane.merge_start_dis);
+        // adapted_lane_info->set_merge_end_dis(lane.merge_end_dis);
       } else {
-        adapted_lane_info->set_merge_start_dis(std::numeric_limits<double>::max());
-        adapted_lane_info->set_merge_end_dis(std::numeric_limits<double>::max());
+        // adapted_lane_info->set_merge_start_dis(std::numeric_limits<double>::max());
+        // adapted_lane_info->set_merge_end_dis(std::numeric_limits<double>::max());
       }
 
       switch (lane.lane_type) {
@@ -3154,6 +3545,7 @@ void AdaptInternal2Output(const BevMapInfoPtr bev_map_ptr, const std::vector<cem
   AdaptInternal2Output(sensorStatus_info, adapted_fusion_map->mutable_sensor_status_info());
   return;
 }
+
 void AdaptInternal2Output(const cem::message::env_model::Trajectory &raw_exp_trajectory,
                           byd::msg::orin::routing_map::Trajectory   *adapted_exp_trajectory) {
   adapted_exp_trajectory->set_id(raw_exp_trajectory.id);

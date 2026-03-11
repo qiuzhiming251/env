@@ -80,8 +80,6 @@ class CoarseMatching {
   // 获取只能通到Ramp的车道数
   int GetExclusiveLaneCountToRamp(const JunctionInfoCity &junction, uint64_t target_section_id, uint64_t bev_size);
 
-  int GetMaxNormalLaneCountToJunction(const JunctionInfoCity &junction);
-
   // 检查路口是否只有一个左转车道
   bool hasSingleLeftTurnLane(const std::vector<TurnType> &junction_turn_types);
 

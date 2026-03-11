@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <utility>
+#include <message/internal_message.h>
 #include "glog/logging.h"
 
 namespace cem {
@@ -13,7 +14,7 @@ bool SensorDataManager::Init()
 {
     if (!inited_)
     {
-        std::get<0>(sensors_).reset(new Sensor<LocalizationPtr>(100));
+        std::get<0>(sensors_).reset(new Sensor<LocalizationPtr>(300));
         std::get<1>(sensors_).reset(new Sensor<VehicleSignalPtr>());
         std::get<2>(sensors_).reset(new Sensor<Bcm50msPdu02Ptr>());
         std::get<3>(sensors_).reset(new Sensor<Ibs20msPdu08Ptr>());
@@ -35,12 +36,15 @@ bool SensorDataManager::Init()
         std::get<19>(sensors_).reset(new Sensor<PlanFuncStatePtr>());
         std::get<20>(sensors_).reset(new Sensor<CAN1Ptr>());
         std::get<21>(sensors_).reset(new Sensor<OCCInfoPtr>());
-        std::get<22>(sensors_).reset(new Sensor<SdTrafficLightPtr>());
-        std::get<23>(sensors_).reset(new Sensor<MapMatchResultPtr>());
-        std::get<24>(sensors_).reset(new Sensor<VisionTrfInfoPtr>());
-        std::get<25>(sensors_).reset(new Sensor<NaviTrafficInfoPtr>());
-        std::get<26>(sensors_).reset(new Sensor<DriversEventPtr>());
-        std::get<27>(sensors_).reset(new Sensor<MapMatchResultBaiduPtr>());
+        std::get<22>(sensors_).reset(new Sensor<SDTrafficLightPtr>());
+        std::get<23>(sensors_).reset(new Sensor<E2eMapPtr>());
+        std::get<24>(sensors_).reset(new Sensor<E2EMapRawPtr>());
+        std::get<25>(sensors_).reset(new Sensor<E2EResultRawPtr>());
+        std::get<26>(sensors_).reset(new Sensor<TopStatePtr>());
+        std::get<27>(sensors_).reset(new Sensor<MapMatchResultPtr>());
+        std::get<28>(sensors_).reset(new Sensor<VisionTrfInfoPtr>());
+        std::get<29>(sensors_).reset(new Sensor<NaviTrafficInfoPtr>());
+        std::get<30>(sensors_).reset(new Sensor<DriversEventPtr>());
         inited_ = true;
     }
 

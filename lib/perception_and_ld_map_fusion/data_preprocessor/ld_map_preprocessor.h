@@ -14,7 +14,8 @@ class LdMapProcessor
     kMergeLeft = 1,
     kMergeRight = 2,
     kSplitLeft = 3,
-    kSplitRight = 4
+    kSplitRight = 4,
+    kUnknown = 5
   };
   struct MergeSplitTarget {
     uint64_t lane_to;

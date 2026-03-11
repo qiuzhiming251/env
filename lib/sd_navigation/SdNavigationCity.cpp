@@ -17,7 +17,7 @@
 #include "lib/common/log_custom.h"
 #include "lib/sd_navigation/routing_map_debug.h"
 #include "modules/msg/environment_model_msgs/local_map_info.pb.h"
-#include "cyber_release/include/cyber/time/time.h"
+#include "cyber/time/time.h"
 #include "modules/common/math/line_segment2d.h"
 
 namespace cem {
@@ -878,8 +878,7 @@ void SdNavigationCity::SelectGuideLanesWithSd(const std::vector<uint64_t>       
         }
         // case2:合理范围未匹配上，且地图和感知车道数相差较大
         if ((std::next(it) == sd_recommend_lane.end()) && (lane_num_diff > 1)) {
-          // int ego_bev_id, ego_bev_index = -1;
-          int ego_bev_id = -1, ego_bev_index = -1;
+          int ego_bev_id = 0, ego_bev_index = -1;
           for (auto &bev_root_id : bev_ego_root_section_x0) {
             auto lane_r = INTERNAL_PARAMS.raw_bev_data.GetLaneInfoById(bev_root_id);
             if (!lane_r) {

@@ -25,7 +25,7 @@ void LaneTypeChecker::KeeperGetFrameTopos()
     std::set <uint64_t> next_lane_ids;
     std::set <uint64_t> prev_lane_ids;
 
-    if (!bev_lane.id || bev_lane.start_dx > max_keep_offset)
+    if (!bev_lane.id)
     {
       continue;
     }
@@ -60,12 +60,19 @@ void LaneTypeChecker::KeeperGetFrameTopos()
       uint64_t firstElement = *next_lane_ids.begin();
       uint64_t lastElement  = *next_lane_ids.rbegin();
 
-      split_topo.main_lane  = bev_lane.id;
-      split_topo.main_lane_type = bev_lane.split_topo_extend;
       if(lane_info.find(firstElement) != lane_info.end() && lane_info.find(lastElement) != lane_info.end())
       {
         auto sub_lane_1_id  = lane_info[firstElement]->id;
         auto sub_lane_2_id  = lane_info[lastElement]->id;
+
+        bool range_valid = JudgeRangeValid(bev_lane.id, sub_lane_1_id, sub_lane_2_id, split_mode);
+        if(!range_valid)
+        {
+          continue;
+        }
+
+        split_topo.main_lane  = bev_lane.id;
+        split_topo.main_lane_type = bev_lane.split_topo_extend; 
 
         auto sub_lane_1_type = lane_info[firstElement]->split_topo_extend;
         auto sub_lane_2_type = lane_info[lastElement]->split_topo_extend;
@@ -104,12 +111,19 @@ void LaneTypeChecker::KeeperGetFrameTopos()
       uint64_t firstElement = *prev_lane_ids.begin();
       uint64_t lastElement  = *prev_lane_ids.rbegin();
 
-      merge_topo.main_lane = bev_lane.id;
-      merge_topo.main_lane_type = bev_lane.merge_topo_extend;
       if(lane_info.find(firstElement) != lane_info.end() && lane_info.find(lastElement) != lane_info.end())
       {
         auto sub_lane_1_id  = lane_info[firstElement]->id;
         auto sub_lane_2_id  = lane_info[lastElement]->id;
+
+        bool range_valid = JudgeRangeValid(bev_lane.id, sub_lane_1_id, sub_lane_2_id, merge_mode);
+        if(!range_valid)
+        {
+          continue;
+        }
+
+        merge_topo.main_lane = bev_lane.id;
+        merge_topo.main_lane_type = bev_lane.merge_topo_extend;
 
         auto sub_lane_1_type = lane_info[firstElement]->merge_topo_extend;
         auto sub_lane_2_type = lane_info[lastElement]->merge_topo_extend;
@@ -1216,8 +1230,8 @@ bool LaneTypeChecker::CheckTopoUseMatchers(const uint64_t topo_lane_id, const in
           uint64_t split_sub_lane_1 = lane_iter->next_lane_ids[0];
           uint64_t split_sub_lane_2 = lane_iter->next_lane_ids[1];
 
-          LdMapProcessor::MergeSplitType split_sub_lane_1_type = LdMapProcessor::MergeSplitType::kConnectForward;
-          LdMapProcessor::MergeSplitType split_sub_lane_2_type = LdMapProcessor::MergeSplitType::kConnectForward;
+          LdMapProcessor::MergeSplitType split_sub_lane_1_type = LdMapProcessor::MergeSplitType::kUnknown;
+          LdMapProcessor::MergeSplitType split_sub_lane_2_type = LdMapProcessor::MergeSplitType::kUnknown;
 
           if (lane_iter->next_lane_ids[0] == match_info->bev_target_to[0].second.bev_lane_to) {
             split_sub_lane_1_type = match_info->bev_target_to[0].second.type;
@@ -1370,8 +1384,8 @@ bool LaneTypeChecker::CheckTopoUseMatchers(const uint64_t topo_lane_id, const in
               continue;
             }
 
-            LdMapProcessor::MergeSplitType merge_sub_lane_1_type = LdMapProcessor::MergeSplitType::kConnectForward;
-            LdMapProcessor::MergeSplitType merge_sub_lane_2_type = LdMapProcessor::MergeSplitType::kConnectForward;
+            LdMapProcessor::MergeSplitType merge_sub_lane_1_type = LdMapProcessor::MergeSplitType::kUnknown;
+            LdMapProcessor::MergeSplitType merge_sub_lane_2_type = LdMapProcessor::MergeSplitType::kUnknown;
 
             uint64_t merge_sub_lane_1_id = merge_main_lane_iter->previous_lane_ids[0];
             uint64_t merge_sub_lane_2_id = merge_main_lane_iter->previous_lane_ids[1];
@@ -2064,6 +2078,82 @@ bool LaneTypeChecker::BevTopoIsValid(const uint64_t main_lane_id, const uint64_t
     }
   }
   return topo_valid;
+}
+
+bool LaneTypeChecker::JudgeRangeValid(const uint64_t main_lane_id, 
+                                     const uint64_t sub_lane_1_id, 
+                                     const uint64_t sub_lane_2_id,
+                                     const int type){
+  bool range_valid = false;
+  if (!main_lane_id || !sub_lane_1_id || !sub_lane_2_id || data_ == nullptr) {
+    return false;
+  }
+
+  auto main_lane_iter =
+      std::find_if(data_->lane_infos.begin(), data_->lane_infos.end(), [&](const BevLaneInfo &p) { return p.id == main_lane_id; });
+
+  auto sub_lane_1_iter =
+      std::find_if(data_->lane_infos.begin(), data_->lane_infos.end(), [&](const BevLaneInfo &p) { return p.id == sub_lane_1_id; });
+
+  auto sub_lane_2_iter =
+      std::find_if(data_->lane_infos.begin(), data_->lane_infos.end(), [&](const BevLaneInfo &p) { return p.id == sub_lane_2_id; });
+
+  if (main_lane_iter == data_->lane_infos.end() || sub_lane_1_iter == data_->lane_infos.end() ||
+      sub_lane_2_iter == data_->lane_infos.end()) {
+    return false;
+  } 
+  
+  auto main_lane_pts  = *(main_lane_iter->geos);
+  auto sub_lane_1_pts = *(sub_lane_1_iter->geos);
+  auto sub_lane_2_pts = *(sub_lane_2_iter->geos);
+
+  std::sort(main_lane_pts.begin(), main_lane_pts.end(), [](Eigen::Vector2f &pt1, Eigen::Vector2f &pt2) { return pt1.x() < pt2.x(); });
+
+  std::sort(sub_lane_1_pts.begin(), sub_lane_1_pts.end(), [](Eigen::Vector2f &pt1, Eigen::Vector2f &pt2) { return pt1.x() < pt2.x(); });
+
+  std::sort(sub_lane_2_pts.begin(), sub_lane_2_pts.end(), [](Eigen::Vector2f &pt1, Eigen::Vector2f &pt2) { return pt1.x() < pt2.x(); });
+
+  if(main_lane_pts.empty() || sub_lane_1_pts.empty() || sub_lane_2_pts.empty())
+  {
+    return false;
+  }
+
+  if(type == split_mode)
+  {
+    auto sub_lane_1_start_offset = sub_lane_1_pts.front().x();
+    auto sub_lane_2_start_offset = sub_lane_2_pts.front().x();
+
+    if(CHECK_TOPO_DEBUG_MODE)
+    {
+      AINFO << "sub_lane_1: " << sub_lane_1_id << " start_offset: " << sub_lane_1_start_offset;
+      AINFO << "sub_lane_2: " << sub_lane_2_id << " start_offset: " << sub_lane_2_start_offset;
+    }
+
+    if (sub_lane_1_start_offset <= max_keep_offset || sub_lane_2_start_offset <= max_keep_offset)
+    {
+      range_valid = true;
+    }else{
+      range_valid = false;
+    }
+  }
+
+  if(type == merge_mode)
+  {
+    auto main_lane_start_offset = main_lane_pts.front().x();
+    if(CHECK_TOPO_DEBUG_MODE)
+    {
+      AINFO << "main_lane: " << main_lane_id << " start_offset: " << main_lane_start_offset;
+    }
+
+    if(main_lane_start_offset <= max_keep_offset)
+    {
+      range_valid = true;
+    }else{
+      range_valid = false;
+    }
+  }
+
+  return range_valid;
 }
 
 bool LaneTypeChecker::GetVetorialAngle(std::vector<Eigen::Vector2f> &main_lane, std::vector<Eigen::Vector2f> &sub_lane, const int type,

@@ -12,6 +12,7 @@
 #include "lib/map_fusion/graph.h"
 #include "lib/map_fusion/road_divider.h"
 #include "lib/message/env_model/stop_line/stop_line.h"
+#include "lib/perception_and_ld_map_fusion/fusion_manager.h"
 #include "lib/sd_navigation/SDMapTopoExtract.h"
 #include "lib/common/CommonDataType.h"
 
@@ -28,7 +29,8 @@ class LaneGuidance {
          const cem::fusion::SdJunctionInfoCityPtr junctions_ptr, 
          DetectBevMap &aligned_map,
          const std::vector<cem::message::env_model::StopLine> &stop_lines,
-         std::vector<std::pair<uint64_t, std::pair<int, int>>> &guide_lane_result);
+         std::vector<std::pair<uint64_t, std::pair<int, int>>> &guide_lane_result,
+         std::unique_ptr<FusionManager>& fusion_manager);
 
   std::shared_ptr<BevMapInfo> GetMapInfo() { return last_map_info_ptr_; };
 

@@ -16,7 +16,7 @@
 #include "fmt/format.h"
 #include "routing_map_debug.h"
 #include "modules/msg/environment_model_msgs/local_map_info.pb.h"
-#include "cyber_release/include/cyber/time/time.h"
+// #include "cyber_release/include/cyber/time/time.h"
 #include "modules/common/math/line_segment2d.h"
 #include "modules/perception/env/src/lib/sd_navigation/SDMapElementExtract.h"
 
@@ -39,8 +39,7 @@ void SdNavigationHighway::Proc(const std::shared_ptr<RoutingMap> &raw_routing_ma
   if (!raw_routing_map || !raw_bev_map || !GlobalBevMapOutPut) {
     return;
   }
-  auto& ld_match_infos = INTERNAL_PARAMS.ld_match_info_data.GetMatchInfo();
-
+  auto &ld_match_infos = INTERNAL_PARAMS.ld_match_info_data.GetMatchInfo();
 
   uint64_t bev_counter                                                = raw_bev_map == nullptr ? 0 : raw_bev_map->header.cycle_counter;
   INTERNAL_PARAMS.navigation_info_data.navi_debug_infos().bev_counter = bev_counter;
@@ -77,14 +76,14 @@ void SdNavigationHighway::Proc(const std::shared_ptr<RoutingMap> &raw_routing_ma
   }
 
   for (auto &sd_junction_tmp : sd_junction_infos_) {
-    SD_BEV_PROCESS << "[SDNOA Junction] ," << sd_junction_tmp.junction_id << "," << (int)sd_junction_tmp.junction_type << ",  "
-                   << sd_junction_tmp.offset << "  ," << sd_junction_tmp.main_road_lane_nums << "," << sd_junction_tmp.target_road_lane_nums
-                   << "," << (int)sd_junction_tmp.has_passed_flag << "," << (int)sd_junction_tmp.has_effected_flag;
+    HNOA_L3_LOG << "[SDNOA Junction] ," << sd_junction_tmp.junction_id << "," << (int)sd_junction_tmp.junction_type << ",  "
+                << sd_junction_tmp.offset << "  ," << sd_junction_tmp.main_road_lane_nums << "," << sd_junction_tmp.target_road_lane_nums
+                << "," << (int)sd_junction_tmp.has_passed_flag << "," << (int)sd_junction_tmp.has_effected_flag;
   }
 
-  SD_BEV_PROCESS << fmt::format("Before SelectBevNavigationLanes: sections size: {}", bev_sections_.size());
+  HNOA_L3_LOG << fmt::format("Before SelectBevNavigationLanes: sections size: {}", bev_sections_.size());
   for (size_t i = 0; i < bev_sections_.size(); ++i) {
-    SD_BEV_PROCESS << fmt::format("  Section {}: [{}]", i, fmt::join(bev_sections_[i], ", "));
+    HNOA_L3_LOG << fmt::format("  Section {}: [{}]", i, fmt::join(bev_sections_[i], ", "));
   }
 
   std::pair<uint64_t, uint64_t> fusion_emergency_laneid = {};
@@ -121,7 +120,7 @@ void SdNavigationHighway::Proc(const std::shared_ptr<RoutingMap> &raw_routing_ma
     SetNaviInterfaceAndDebugInfos(GlobalBevMapOutPut);
   }
 
-  SD_BEV_PROCESS << fmt::format("  Output final_guide_laneids: [{}]", sd_guide_lane_ids);
+  HNOA_L3_LOG << fmt::format("  Output final_guide_laneids: [{}]", sd_guide_lane_ids);
 }
 void SdNavigationHighway::SetLDJunctionInfo() {
   fmt::format_to(ld_info_buffer_, "  all_ld_jun_info:[");
@@ -148,10 +147,10 @@ void SdNavigationHighway::SelectBevNavigationLanes(const std::shared_ptr<Routing
   if (bev_sections_in.empty()) {
     return;
   }
-  SD_COARSE_MATCH_LOG << "[SelectBevNavigationLanes] GetEmergencyLaneInfo ";
+  HNOA_L3_LOG << "[SelectBevNavigationLanes] GetEmergencyLaneInfo ";
   ///获取sdmap中的应急车道信息
   EmergencyLaneInfo emergency_lane_info = GetEmergencyLaneInfo();
-  SD_COARSE_MATCH_LOG << "[SelectBevNavigationLanes] GetHarborStopInfo ";
+  HNOA_L3_LOG << "[SelectBevNavigationLanes] GetHarborStopInfo ";
   GetHarborStopInfo();
   //GetAccLaneInfo();
   GetDecLaneInfo();
@@ -169,11 +168,11 @@ void SdNavigationHighway::SelectBevNavigationLanes(const std::shared_ptr<Routing
       target_sd_junctions.push_back(&sd_junction_infos_[i]);
     }
   }
-  SD_COARSE_MATCH_LOG << " [junction filter] jcts: ";
+  HNOA_L3_LOG << " [junction filter] jcts: ";
   for (const auto &junction : target_sd_junctions) {
-    SD_COARSE_MATCH_LOG << fmt::format("{}", junction);
+    HNOA_L3_LOG << fmt::format("{}", junction);
   }
-  SD_COARSE_MATCH_LOG << " [junction filter] end ================================== ";
+  HNOA_L3_LOG << " [junction filter] end ================================== ";
   /* CNOAC2-100318 */
   if (target_sd_junctions.size() >= 3) {
     if (target_sd_junctions.back()->junction_type == JunctionType::RampInto &&
@@ -181,8 +180,8 @@ void SdNavigationHighway::SelectBevNavigationLanes(const std::shared_ptr<Routing
         target_sd_junctions[1]->junction_type == JunctionType::ApproachRampInto) {
       int ReferenceLaneNum0 = std::min(target_sd_junctions[0]->target_road_lane_nums, target_sd_junctions[0]->main_road_lane_nums);
       int ReferenceLaneNum1 = std::min(target_sd_junctions[1]->target_road_lane_nums, target_sd_junctions[1]->main_road_lane_nums);
-      SD_COARSE_MATCH_LOG << "[junction filter] :  "
-                          << "ReferenceLaneNum0: " << ReferenceLaneNum0 << " , ReferenceLaneNum1: " << ReferenceLaneNum1;
+      HNOA_L3_LOG << "[junction filter] :  "
+                  << "ReferenceLaneNum0: " << ReferenceLaneNum0 << " , ReferenceLaneNum1: " << ReferenceLaneNum1;
       if (ReferenceLaneNum0 > ReferenceLaneNum1) {
         target_sd_junctions.erase(target_sd_junctions.begin());
       }
@@ -239,7 +238,7 @@ void SdNavigationHighway::SelectBevNavigationLanes(const std::shared_ptr<Routing
     //选道路
     selected_section_index = SelectMainRoadSectionNoNavi(bev_sections_in);
     auto &target_section   = bev_sections_in[selected_section_index];
-    SD_COARSE_MATCH_LOG << " [SelectBevNavigationLanes]target_section: " << fmt::format(" [{}]  ", fmt::join(target_section, ", "));
+    HNOA_L3_LOG << " [SelectBevNavigationLanes]target_section: " << fmt::format(" [{}]  ", fmt::join(target_section, ", "));
 
     ///排除应急车道
     FusionCurrentBevEmergencyLaneid(target_section, emergency_lane_info, selected_section_index, current_left_bev_emergency_laneid,
@@ -248,17 +247,17 @@ void SdNavigationHighway::SelectBevNavigationLanes(const std::shared_ptr<Routing
     std::vector<uint64_t> bev_section_tmp = target_section;
     if (current_left_bev_emergency_laneid != 0 && bev_section_tmp.size() > 1) {
       bev_section_tmp.erase(bev_section_tmp.begin());
-      SD_COARSE_MATCH_LOG << "[SelectBevNavigationLanes] erase the left emergency_lane .";
+      HNOA_L3_LOG << "[SelectBevNavigationLanes] erase the left emergency_lane .";
     }
     if (current_right_bev_emergency_laneid != 0 && bev_section_tmp.size() > 1) {
       bev_section_tmp.pop_back();
-      SD_COARSE_MATCH_LOG << "[SelectBevNavigationLanes] erase the right emergency_lane .";
+      HNOA_L3_LOG << "[SelectBevNavigationLanes] erase the right emergency_lane .";
     }
 
     /* 港湾临停车道的过滤 */
     auto bev_map_ptr = INTERNAL_PARAMS.raw_bev_data.GetRawBevMapPtr();
     if (!bev_map_ptr) {
-      SD_COARSE_MATCH_LOG << fmt::format("[SelectBevNavigationLanes] bev_map is null, exiting .");
+      HNOA_L3_LOG << fmt::format("[SelectBevNavigationLanes] bev_map is null, exiting .");
       return;
     }
     std::vector<uint64_t> target_section_without_harbor;
@@ -273,7 +272,7 @@ void SdNavigationHighway::SelectBevNavigationLanes(const std::shared_ptr<Routing
     }
     guide_laneids_ref = target_section_without_harbor;
 
-    SD_COARSE_MATCH_LOG << " [SelectBevNavigationLanes]guide_laneids: " << fmt::format(" [{}]  ", fmt::join(guide_laneids_ref, ", "));
+    HNOA_L3_LOG << " [SelectBevNavigationLanes]guide_laneids: " << fmt::format(" [{}]  ", fmt::join(guide_laneids_ref, ", "));
 
     navi_debug_info.all_sections_in       = bev_sections_in;
     navi_debug_info.target_section        = target_section;
@@ -288,29 +287,29 @@ void SdNavigationHighway::SelectBevNavigationLanes(const std::shared_ptr<Routing
   /////////////2 有导航信息 按照junction类型给导航车道
   /*****选道路*****/
   { /*选路的输入*/
-    SD_COARSE_MATCH_LOG << "[SelectBevNavigationLanes] hghiway navi RoadSelect start... ";
-    SD_COARSE_MATCH_LOG << "Before SelectOptRoad: bev_sections size: " << bev_sections_in.size();
+    HNOA_L3_LOG << "[SelectBevNavigationLanes] hghiway navi RoadSelect start... ";
+    HNOA_L3_LOG << "Before SelectOptRoad: bev_sections size: " << bev_sections_in.size();
     for (size_t i = 0; i < bev_sections_in.size(); ++i) {
       std::ostringstream section_str;
       for (const auto &lane_id : bev_sections_in[i]) {
         section_str << lane_id << ",";
       }
-      SD_COARSE_MATCH_LOG << "  Section " << i << ": " << section_str.str();
+      HNOA_L3_LOG << "  Section " << i << ": " << section_str.str();
     }
 
-    // SD_COARSE_MATCH_LOG << "Entering SelectBevNavigationLanes inputs: "
+    // HNOA_L3_LOG << "Entering SelectBevNavigationLanes inputs: "
     //                << fmt::format("road_selected: [{}] ", fmt::join(road_selected_in, ", "));
     /*高速路口信息 */
-    SD_COARSE_MATCH_LOG << "junctions_info_highway details:";
-    SD_COARSE_MATCH_LOG << "target_sd_junctions.size :" << target_sd_junctions.size();
+    HNOA_L3_LOG << "junctions_info_highway details:";
+    HNOA_L3_LOG << "target_sd_junctions.size :" << target_sd_junctions.size();
 
     for (const auto &junction : target_sd_junctions) {
-      SD_COARSE_MATCH_LOG << fmt::format("{}", junction);
+      HNOA_L3_LOG << fmt::format("{}", junction);
     }
 
     if (bev_sections_in.size() > 1) {
       //SD_JUNCTION_CONVERTE_LOG << fmt::format("{}", bev_sections_in);
-      //SD_COARSE_MATCH_LOG << "[SelectBevNavigationLanes]  : " << fmt::format("[{}]", fmt::join(bev_sections_in, ", "));
+      //HNOA_L3_LOG << "[SelectBevNavigationLanes]  : " << fmt::format("[{}]", fmt::join(bev_sections_in, ", "));
       JunctionInfo *sd_junction = nullptr;
       for (const auto &junction : target_sd_junctions) {
         if (Junction_select_road_dist_map_.find(junction->junction_type) != Junction_select_road_dist_map_.end()) {
@@ -319,8 +318,8 @@ void SdNavigationHighway::SelectBevNavigationLanes(const std::shared_ptr<Routing
         }
       }
       if (sd_junction != nullptr) {
-        SD_COARSE_MATCH_LOG << "[RoadSelect] sd_junction offset: " << sd_junction->offset << "  选路生效距离： "
-                            << Junction_select_road_dist_map_[sd_junction->junction_type];
+        HNOA_L3_LOG << "[RoadSelect] sd_junction offset: " << sd_junction->offset << "  选路生效距离： "
+                    << Junction_select_road_dist_map_[sd_junction->junction_type];
         if (sd_junction->offset < Junction_select_road_dist_map_[sd_junction->junction_type]) {
           // 使用代价函数选择最优section
           std::vector<int> ego_section_indexs = {};  /// 自车所在的section index
@@ -335,22 +334,22 @@ void SdNavigationHighway::SelectBevNavigationLanes(const std::shared_ptr<Routing
           // 根据路口类型确定候选section
           std::vector<int> candidate_sections;
           if (sd_junction->junction_type == JunctionType::RampInto) {
-            SD_COARSE_MATCH_LOG << "[RoadSelect] RampInto junction select road. ";
+            HNOA_L3_LOG << "[RoadSelect] RampInto junction select road. ";
 
             candidate_sections = {static_cast<int>(bev_sections_in.size() - 1)};
 
           } else if (sd_junction->junction_type == JunctionType::RampSplitLeft) {
-            SD_COARSE_MATCH_LOG << "[RoadSelect] RampSplitLeft junction select road. ";
+            HNOA_L3_LOG << "[RoadSelect] RampSplitLeft junction select road. ";
 
             candidate_sections = {0};
 
           } else if (sd_junction->junction_type == JunctionType::RampSplitRight) {
-            SD_COARSE_MATCH_LOG << "[RoadSelect] RampSplitRight junction select road. ";
+            HNOA_L3_LOG << "[RoadSelect] RampSplitRight junction select road. ";
 
             candidate_sections = {static_cast<int>(bev_sections_in.size() - 1)};
 
           } else if (sd_junction->junction_type == JunctionType::RampSplitMiddle) {
-            SD_COARSE_MATCH_LOG << "[RoadSelect] RampSplitMiddle junction select road. ";
+            HNOA_L3_LOG << "[RoadSelect] RampSplitMiddle junction select road. ";
 
             if (bev_sections_in.size() > 2) {
               candidate_sections = {1};
@@ -359,25 +358,25 @@ void SdNavigationHighway::SelectBevNavigationLanes(const std::shared_ptr<Routing
             }
 
           } else if (sd_junction->junction_type == JunctionType::ApproachRampInto) {
-            SD_COARSE_MATCH_LOG << "[RoadSelect] ApproachRampInto junction select road. ";
+            HNOA_L3_LOG << "[RoadSelect] ApproachRampInto junction select road. ";
             // 对于ApproachRampInto，考虑所有section作为候选
             for (size_t i = 0; i < bev_sections_in.size(); ++i) {
               candidate_sections.push_back(static_cast<int>(i));
             }
           } else if (sd_junction->junction_type == JunctionType::ApproachRampMerge) {
-            SD_COARSE_MATCH_LOG << "[RoadSelect] ApproachRampMerge junction select road. ";
+            HNOA_L3_LOG << "[RoadSelect] ApproachRampMerge junction select road. ";
             // 对于ApproachRampMerge，考虑所有section作为候选
             for (size_t i = 0; i < bev_sections_in.size(); ++i) {
               candidate_sections.push_back(static_cast<int>(i));
             }
           } else if (sd_junction->junction_type == JunctionType::MainRoadSplitLeft) {
-            SD_COARSE_MATCH_LOG << "[RoadSelect] MainRoadSplitLeft junction select road. ";
+            HNOA_L3_LOG << "[RoadSelect] MainRoadSplitLeft junction select road. ";
             candidate_sections = {0};
           } else if (sd_junction->junction_type == JunctionType::MainRoadSplitRight) {
-            SD_COARSE_MATCH_LOG << "[RoadSelect] MainRoadSplitRight junction select road. ";
+            HNOA_L3_LOG << "[RoadSelect] MainRoadSplitRight junction select road. ";
             candidate_sections = {static_cast<int>(bev_sections_in.size() - 1)};
           } else if (sd_junction->junction_type == JunctionType::MainRoadSplitMiddle) {
-            SD_COARSE_MATCH_LOG << "[RoadSelect] MainRoadSplitMiddle junction select road. ";
+            HNOA_L3_LOG << "[RoadSelect] MainRoadSplitMiddle junction select road. ";
             if (bev_sections_in.size() > 2) {
               candidate_sections = {1};
             } else {
@@ -389,7 +388,7 @@ void SdNavigationHighway::SelectBevNavigationLanes(const std::shared_ptr<Routing
           double min_cost = std::numeric_limits<double>::max();
           for (int section_index : candidate_sections) {
             double cost = CalculateSectionCost(section_index, bev_sections_in, ego_section_indexs, target_sd_junctions);
-            SD_COARSE_MATCH_LOG << " [RoadSelect] section " << section_index << " cost: " << cost;
+            HNOA_L3_LOG << " [RoadSelect] section " << section_index << " cost: " << cost;
 
             if (cost < min_cost) {
               min_cost               = cost;
@@ -403,12 +402,12 @@ void SdNavigationHighway::SelectBevNavigationLanes(const std::shared_ptr<Routing
         }
       }
       if (selected_section_index == -1) {
-        SD_COARSE_MATCH_LOG << "[RoadSelect] no section is selected , select cruise  section";
+        HNOA_L3_LOG << "[RoadSelect] no section is selected , select cruise  section";
         selected_section_index = SelectMainRoadSectionNoNavi(bev_sections_in);
       }
 
     } else {
-      SD_COARSE_MATCH_LOG << "[RoadSelect] default case , select index 0";
+      HNOA_L3_LOG << "[RoadSelect] default case , select index 0";
       selected_section_index = 0;
     }
   }
@@ -426,17 +425,17 @@ void SdNavigationHighway::SelectBevNavigationLanes(const std::shared_ptr<Routing
                                     current_right_bev_emergency_laneid);
     if (current_left_bev_emergency_laneid != 0 && target_section.size() > 1) {
       target_section.erase(target_section.begin());
-      SD_COARSE_MATCH_LOG << "[SelectBevNavigationLanes] erase the left emergency_lane . id: " << current_right_bev_emergency_laneid;
+      HNOA_L3_LOG << "[SelectBevNavigationLanes] erase the left emergency_lane . id: " << current_right_bev_emergency_laneid;
     }
     if (current_right_bev_emergency_laneid != 0 && target_section.size() > 1) {
       target_section.pop_back();
-      SD_COARSE_MATCH_LOG << "[SelectBevNavigationLanes] erase the right emergency_lane . id: " << current_right_bev_emergency_laneid;
+      HNOA_L3_LOG << "[SelectBevNavigationLanes] erase the right emergency_lane . id: " << current_right_bev_emergency_laneid;
     }
 
     /* 港湾临停车道的过滤 */
     auto bev_map_ptr = INTERNAL_PARAMS.raw_bev_data.GetRawBevMapPtr();
     if (!bev_map_ptr) {
-      SD_COARSE_MATCH_LOG << fmt::format("[SelectBevNavigationLanes] bev_map is null, exiting .");
+      HNOA_L3_LOG << fmt::format("[SelectBevNavigationLanes] bev_map is null, exiting .");
       return;
     }
     target_section_without_harbor =
@@ -453,12 +452,12 @@ void SdNavigationHighway::SelectBevNavigationLanes(const std::shared_ptr<Routing
     }
 
     for (const auto &junction : target_sd_junctions) {
-      SD_COARSE_MATCH_LOG << fmt::format("{}", junction);
+      HNOA_L3_LOG << fmt::format("{}", junction);
     }
 
     /* 根据路口数量进行选道 */
     if (target_sd_junctions.size() == 1) {
-      SD_COARSE_MATCH_LOG << "[guidelanes] deal with  1 junction: ";
+      HNOA_L3_LOG << "[guidelanes] deal with  1 junction: ";
 
       std::vector<uint64_t> guide_laneids = {};
       int                   match_type    = 0;
@@ -481,19 +480,19 @@ void SdNavigationHighway::SelectBevNavigationLanes(const std::shared_ptr<Routing
       std::vector<uint64_t> third_guide_laneids  = {};
       int                   match_type1, match_type2, match_type3 = 0;
       JunctionNaviMatch(target_sd_junctions.front(), target_section_without_harbor, match_type1, first_guide_laneids);
-      SD_COARSE_MATCH_LOG << "[guidelanes]   junctions size : " << target_sd_junctions.size();
+      HNOA_L3_LOG << "[guidelanes]   junctions size : " << target_sd_junctions.size();
       if (target_sd_junctions.size() >= 2) {
-        SD_COARSE_MATCH_LOG << "[guidelanes] deal with  more than 2 junctions: ";
+        HNOA_L3_LOG << "[guidelanes] deal with  more than 2 junctions: ";
         JunctionNaviMatch(target_sd_junctions[1], first_guide_laneids, match_type2, second_guide_laneids);
       }
 
       if (target_sd_junctions.size() >= 3) {
-        SD_COARSE_MATCH_LOG << "[guidelanes] deal with  more than 3 junctions: ";
+        HNOA_L3_LOG << "[guidelanes] deal with  more than 3 junctions: ";
         JunctionNaviMatch(target_sd_junctions[2], second_guide_laneids, match_type3, third_guide_laneids);
       }
 
       if (target_sd_junctions.size() == 3) {
-        SD_COARSE_MATCH_LOG << "[guidelanes] deal with  3 junctions: ";
+        HNOA_L3_LOG << "[guidelanes] deal with  3 junctions: ";
 
         for (auto &laneid_tmp : second_guide_laneids) {
           auto find_itor = std::find(third_guide_laneids.begin(), third_guide_laneids.end(), laneid_tmp);
@@ -509,7 +508,6 @@ void SdNavigationHighway::SelectBevNavigationLanes(const std::shared_ptr<Routing
         }
         navi_debug_info.guide_laneids = second_guide_laneids;
         guide_laneids_ref             = third_guide_laneids;
-        navi_debug_info.guide_laneids_refer = guide_laneids_ref;
         navi_debug_info.match_type    = {StrNaviMatchTypeHighway(match_type1), StrNaviMatchTypeHighway(match_type2),
                                          StrNaviMatchTypeHighway(match_type3)};
 
@@ -517,7 +515,7 @@ void SdNavigationHighway::SelectBevNavigationLanes(const std::shared_ptr<Routing
       }
 
       if (target_sd_junctions.size() == 2) {
-        SD_COARSE_MATCH_LOG << "[guidelanes] deal with  2 junctions: ";
+        HNOA_L3_LOG << "[guidelanes] deal with  2 junctions: ";
         navi_debug_info.match_type = {StrNaviMatchTypeHighway(match_type1), StrNaviMatchTypeHighway(match_type2)};
 
         if (IsV2IgnoredJunction(*target_sd_junctions[0])) {
@@ -548,7 +546,6 @@ void SdNavigationHighway::SelectBevNavigationLanes(const std::shared_ptr<Routing
           guide_laneids_ref             = second_guide_laneids;
           //v2_junction_ids               = {target_sd_junctions[0]->junction_id, target_sd_junctions[1]->junction_id};
         }
-        navi_debug_info.guide_laneids_refer = guide_laneids_ref;
       }
     }
   }
@@ -568,7 +565,7 @@ void SdNavigationHighway::JunctionNaviMatch(const JunctionInfo *junction_info_pt
                                             int &match_type, std::vector<uint64_t> &guide_laneids) {
 
   guide_laneids.clear();
-  SD_COARSE_MATCH_LOG << "candidate_lanes_in.size()" << candidate_lanes_in.size();
+  HNOA_L3_LOG << "candidate_lanes_in.size()" << candidate_lanes_in.size();
   if (candidate_lanes_in.empty()) {
     return;
   }
@@ -576,15 +573,15 @@ void SdNavigationHighway::JunctionNaviMatch(const JunctionInfo *junction_info_pt
 
     guide_laneids = {candidate_lanes_in.back()};
     match_type    = 2;
-    SD_COARSE_MATCH_LOG << "[JunctionNaviMatch] RampInto: recommand the last lane  ";
+    HNOA_L3_LOG << "[JunctionNaviMatch] RampInto: recommand the last lane  ";
     int ReferenceLaneNum = junction_info_ptr->main_road_lane_nums;
-    SD_COARSE_MATCH_LOG << "[JunctionNaviMatch] RampInto:  "
-                        << "main_road_lane_nums: " << ReferenceLaneNum << " offset: " << junction_info_ptr->offset;
+    HNOA_L3_LOG << "[JunctionNaviMatch] RampInto:  "
+                << "main_road_lane_nums: " << ReferenceLaneNum << " offset: " << junction_info_ptr->offset;
 
   } else if (junction_info_ptr->junction_type == JunctionType::RampSplitLeft) {
     int ReferenceLaneNum = junction_info_ptr->main_road_lane_nums;
-    SD_COARSE_MATCH_LOG << "[JunctionNaviMatch] RampSplitLeft:  "
-                        << "main_road_lane_nums: " << ReferenceLaneNum << " offset: " << junction_info_ptr->offset;
+    HNOA_L3_LOG << "[JunctionNaviMatch] RampSplitLeft:  "
+                << "main_road_lane_nums: " << ReferenceLaneNum << " offset: " << junction_info_ptr->offset;
     if (candidate_lanes_in.size() > 1) {
       if (candidate_lanes_in.size() >= ReferenceLaneNum && ReferenceLaneNum != 0 && junction_info_ptr->offset > 500) {
         for (unsigned int n = 0; n < ReferenceLaneNum; n++) {
@@ -610,8 +607,8 @@ void SdNavigationHighway::JunctionNaviMatch(const JunctionInfo *junction_info_pt
   } else if (junction_info_ptr->junction_type == JunctionType::RampSplitRight) {
 
     int ReferenceLaneNum = junction_info_ptr->main_road_lane_nums;
-    SD_COARSE_MATCH_LOG << "[JunctionNaviMatch] RampSplitRight:  "
-                        << "main_road_lane_nums: " << ReferenceLaneNum << " offset: " << junction_info_ptr->offset;
+    HNOA_L3_LOG << "[JunctionNaviMatch] RampSplitRight:  "
+                << "main_road_lane_nums: " << ReferenceLaneNum << " offset: " << junction_info_ptr->offset;
     if (candidate_lanes_in.size() > 1) {
       if (candidate_lanes_in.size() >= ReferenceLaneNum && ReferenceLaneNum != 0 && junction_info_ptr->offset > 500) {
         for (unsigned int n = 0; n < ReferenceLaneNum; n++) {
@@ -638,8 +635,8 @@ void SdNavigationHighway::JunctionNaviMatch(const JunctionInfo *junction_info_pt
     SD_COARSE_MATCH_TYPE2_LOG << fmt::format("]");
 
     int ReferenceLaneNum = std::min(junction_info_ptr->target_road_lane_nums, junction_info_ptr->main_road_lane_nums);
-    SD_COARSE_MATCH_LOG << "[JunctionNaviMatch] ApproachRampInto:  "
-                        << "main_road_lane_nums: " << ReferenceLaneNum << " offset: " << junction_info_ptr->offset;
+    HNOA_L3_LOG << "[JunctionNaviMatch] ApproachRampInto:  "
+                << "main_road_lane_nums: " << ReferenceLaneNum << " offset: " << junction_info_ptr->offset;
     if (candidate_lanes_in.size() > 1) {
       if (candidate_lanes_in.size() >= ReferenceLaneNum && ReferenceLaneNum != 0 && junction_info_ptr->offset < 1000) {
         for (unsigned int n = 0; n < ReferenceLaneNum; n++) {
@@ -655,8 +652,8 @@ void SdNavigationHighway::JunctionNaviMatch(const JunctionInfo *junction_info_pt
 
   } else if (junction_info_ptr->junction_type == JunctionType::ApproachRampMerge) {
     int ReferenceLaneNum = junction_info_ptr->main_road_lane_nums;
-    SD_COARSE_MATCH_LOG << "[JunctionNaviMatch] ApproachRampMerge:  "
-                        << "main_road_lane_nums: " << ReferenceLaneNum << " offset: " << junction_info_ptr->offset;
+    HNOA_L3_LOG << "[JunctionNaviMatch] ApproachRampMerge:  "
+                << "main_road_lane_nums: " << ReferenceLaneNum << " offset: " << junction_info_ptr->offset;
     if (candidate_lanes_in.size() > 1) {
       if (candidate_lanes_in.size() >= ReferenceLaneNum && ReferenceLaneNum != 0 && junction_info_ptr->offset < 1000) {
         for (unsigned int n = 0; n < ReferenceLaneNum; n++) {
@@ -671,9 +668,9 @@ void SdNavigationHighway::JunctionNaviMatch(const JunctionInfo *junction_info_pt
     match_type = 7;
 
   } else if (junction_info_ptr->junction_type == JunctionType::RampMerge) {
-    SD_COARSE_MATCH_LOG << "[JunctionNaviMatch] RampMerge:  "
-                        << "main_road_lane_nums: " << junction_info_ptr->main_road_lane_nums << " offset: " << junction_info_ptr->offset
-                        << " EgoInMainRoad: " << EgoInMainRoad();
+    HNOA_L3_LOG << "[JunctionNaviMatch] RampMerge:  "
+                << "main_road_lane_nums: " << junction_info_ptr->main_road_lane_nums << " offset: " << junction_info_ptr->offset
+                << " EgoInMainRoad: " << EgoInMainRoad();
 
     if (candidate_lanes_in.size() > 1 && junction_info_ptr->offset > -50 && junction_info_ptr->offset < 200) {
       for (unsigned int m = 0; m < candidate_lanes_in.size() - 1; m++) {
@@ -719,7 +716,7 @@ void SdNavigationHighway::JunctionNaviMatch(const JunctionInfo *junction_info_pt
   } else {
     guide_laneids = candidate_lanes_in;
   }
-  SD_COARSE_MATCH_LOG << " [JunctionNaviMatch]guide_laneids: " << fmt::format(" [{}]  ", fmt::join(guide_laneids, ", "));
+  HNOA_L3_LOG << " [JunctionNaviMatch]guide_laneids: " << fmt::format(" [{}]  ", fmt::join(guide_laneids, ", "));
 }
 
 double SdNavigationHighway::CalculateSectionCost(int section_index, const std::vector<std::vector<uint64_t>> &bev_sections_in,
@@ -800,8 +797,8 @@ double SdNavigationHighway::CalculateSectionCost(int section_index, const std::v
       uint64_t main_road_lane_num = ego_section->lane_ids.size();
       if (main_road_lane_num > 0) {
         int lane_diff = std::abs(static_cast<int>(current_section_lane_num) - static_cast<int>(main_road_lane_num));
-        SD_COARSE_MATCH_LOG << " [CalculateSectionCost] current_section_lane_num " << current_section_lane_num
-                            << " main_road_lane_num: " << main_road_lane_num << " lane_diff: " << lane_diff;
+        HNOA_L3_LOG << " [CalculateSectionCost] current_section_lane_num " << current_section_lane_num
+                    << " main_road_lane_num: " << main_road_lane_num << " lane_diff: " << lane_diff;
         // 只有车道数差异大于2时才计入cost
         if (lane_diff > kLaneDiffThreshold) {
           lane_diff_cost += lane_diff * kLaneDiffCostFactor;
@@ -826,9 +823,9 @@ double SdNavigationHighway::CalculateSectionCost(int section_index, const std::v
 
   // 总cost代价
   cost = ego_in_section_cost + lane_diff_cost + history_lane_cost + single_lane_cost;
-  SD_COARSE_MATCH_LOG << " [CalculateSectionCost] section " << section_index << " ego_in_section_cost: " << ego_in_section_cost
-                      << " lane_diff_cost: " << lane_diff_cost << " history_lane_cost: " << history_lane_cost
-                      << " single_lane_cost: " << single_lane_cost << " total_cost: " << cost;
+  HNOA_L3_LOG << " [CalculateSectionCost] section " << section_index << " ego_in_section_cost: " << ego_in_section_cost
+              << " lane_diff_cost: " << lane_diff_cost << " history_lane_cost: " << history_lane_cost
+              << " single_lane_cost: " << single_lane_cost << " total_cost: " << cost;
   return cost;
 }
 
@@ -840,7 +837,7 @@ int SdNavigationHighway::SelectMainRoadSectionNoNavi(const std::vector<std::vect
   for (unsigned int i = 0; i < bev_sections_in.size(); i++) {
     for (unsigned int j = 0; j < bev_sections_in[i].size(); j++) {
       if (bev_ego_lane_related_.find(bev_sections_in[i][j]) != bev_ego_lane_related_.end()) {
-        SD_COARSE_MATCH_LOG << " [SelectMainRoadSectionNoNavi] ego_section_indexs: " << i;
+        HNOA_L3_LOG << " [SelectMainRoadSectionNoNavi] ego_section_indexs: " << i;
         ego_section_indexs.emplace_back(i);
         break;
       }
@@ -855,8 +852,8 @@ int SdNavigationHighway::SelectMainRoadSectionNoNavi(const std::vector<std::vect
 
   for (unsigned int i = 0; i < bev_sections_in.size(); i++) {
     double cost = CalculateSectionCost(i, bev_sections_in, ego_section_indexs, empty_junctions);
-    SD_COARSE_MATCH_LOG << " [SelectMainRoadSectionNoNavi] section " << i << " [" << fmt::format("{}", fmt::join(bev_sections_in[i], ", "))
-                        << "] cost: " << cost;
+    HNOA_L3_LOG << " [SelectMainRoadSectionNoNavi] section " << i << " [" << fmt::format("{}", fmt::join(bev_sections_in[i], ", "))
+                << "] cost: " << cost;
 
     if (cost < min_cost) {
       min_cost               = cost;
@@ -866,10 +863,9 @@ int SdNavigationHighway::SelectMainRoadSectionNoNavi(const std::vector<std::vect
 
   if (selected_section_index == -1) {
     selected_section_index = 0;  /// 默认选择最左侧的section
-    SD_COARSE_MATCH_LOG << " [SelectMainRoadSectionNoNavi] default case, index: " << selected_section_index;
+    HNOA_L3_LOG << " [SelectMainRoadSectionNoNavi] default case, index: " << selected_section_index;
   } else {
-    SD_COARSE_MATCH_LOG << " [SelectMainRoadSectionNoNavi] selected section index: " << selected_section_index
-                        << " with cost: " << min_cost;
+    HNOA_L3_LOG << " [SelectMainRoadSectionNoNavi] selected section index: " << selected_section_index << " with cost: " << min_cost;
   }
 
   return selected_section_index;
@@ -878,24 +874,24 @@ int SdNavigationHighway::SelectMainRoadSectionNoNavi(const std::vector<std::vect
 void SdNavigationHighway::BevMapProcess() {
   auto bev_map_ptr = INTERNAL_PARAMS.raw_bev_data.GetRawBevMapPtr();
   if (!bev_map_ptr) {
-    SD_BEV_PROCESS << fmt::format("bev_map is null, exiting BevMapProcess.");
+    HNOA_L3_LOG << fmt::format("bev_map is null, exiting BevMapProcess.");
     return;
   }
   const auto &all_bev_lane_infos = bev_map_ptr->lane_infos;
   auto       &all_bev_road_edges = bev_map_ptr->edges;
   auto       &diversion_zones    = bev_map_ptr->diversion_zone;
-  SD_BEV_PROCESS << fmt::format("raw_bev_map: {}", bev_map_ptr->header.cycle_counter);
-  SD_BEV_PROCESS << fmt::format("Before GetCandidateBevLanes: all_bev_lane_infos size: {}", all_bev_lane_infos.size());
+  HNOA_L3_LOG << fmt::format("raw_bev_map: {}", bev_map_ptr->header.cycle_counter);
+  HNOA_L3_LOG << fmt::format("Before GetCandidateBevLanes: all_bev_lane_infos size: {}", all_bev_lane_infos.size());
 
   for (const auto &lane : all_bev_lane_infos) {
-    SD_BEV_PROCESS << fmt::format("{}", lane);
+    HNOA_L3_LOG << fmt::format("{}", lane);
   }
 
   GetCandidateBevLanes(all_bev_lane_infos, bev_candidate_lanes_);
 
-  SD_BEV_PROCESS << fmt::format("After GetCandidateBevLanes: bev_candidate_lanes size: {}", bev_candidate_lanes_.size());
+  HNOA_L3_LOG << fmt::format("After GetCandidateBevLanes: bev_candidate_lanes size: {}", bev_candidate_lanes_.size());
   for (const auto &lane : bev_candidate_lanes_) {
-    SD_BEV_PROCESS << fmt::format("  Candidate Lane ID: {}", lane->id);
+    HNOA_L3_LOG << fmt::format("  Candidate Lane ID: {}", lane->id);
   }
   static constexpr int kMaxNextDepth = 10;
   for (auto &bev_lane_info : all_bev_lane_infos) {
@@ -924,10 +920,10 @@ void SdNavigationHighway::BevMapProcess() {
     }
   }
 
-  SD_BEV_PROCESS << fmt::format("After GetEgoLaneRelated: bev_ego_lane_related IDs: [{}]", fmt::join(bev_ego_lane_related_, ", "));
+  HNOA_L3_LOG << fmt::format("After GetEgoLaneRelated: bev_ego_lane_related IDs: [{}]", fmt::join(bev_ego_lane_related_, ", "));
 
   for (const auto &edge : all_bev_road_edges) {
-    SD_BEV_PROCESS << fmt::format("{}", edge);
+    HNOA_L3_LOG << fmt::format("{}", edge);
   }
 
   std::vector<BevLaneMarker> filtered_bev_road_edges;
@@ -938,73 +934,73 @@ void SdNavigationHighway::BevMapProcess() {
   }
 
   for (const auto &edge : filtered_bev_road_edges) {
-    SD_BEV_PROCESS << fmt::format("{}", edge);
+    HNOA_L3_LOG << fmt::format("{}", edge);
   }
-  SD_BEV_PROCESS << fmt::format("After filtering road edges: original size: {}, filtered size: {}", all_bev_road_edges.size(),
-                                filtered_bev_road_edges.size());
+  HNOA_L3_LOG << fmt::format("After filtering road edges: original size: {}, filtered size: {}", all_bev_road_edges.size(),
+                             filtered_bev_road_edges.size());
 
   SortBevLaneInfoAndRoadEdges(bev_candidate_lanes_, filtered_bev_road_edges, bev_line_sorts_, bev_left_road_edge_indexs_,
                               bev_right_road_edge_indexs_);
 
-  SD_BEV_PROCESS << fmt::format("After SortBevLaneInfoAndRoadEdges: bev_line_sorts: ");
+  HNOA_L3_LOG << fmt::format("After SortBevLaneInfoAndRoadEdges: bev_line_sorts: ");
   for (const auto &sort_tmp : bev_line_sorts_) {
-    SD_BEV_PROCESS << fmt::format("  [{}, {}]", sort_tmp.id, (int)sort_tmp.is_road_boundary);
+    HNOA_L3_LOG << fmt::format("  [{}, {}]", sort_tmp.id, (int)sort_tmp.is_road_boundary);
   }
-  SD_BEV_PROCESS << fmt::format("bev_left_road_edge_indexs: [{}]", fmt::join(bev_left_road_edge_indexs_, ", "));
-  SD_BEV_PROCESS << fmt::format("bev_right_road_edge_indexs: [{}]", fmt::join(bev_right_road_edge_indexs_, ", "));
+  HNOA_L3_LOG << fmt::format("bev_left_road_edge_indexs: [{}]", fmt::join(bev_left_road_edge_indexs_, ", "));
+  HNOA_L3_LOG << fmt::format("bev_right_road_edge_indexs: [{}]", fmt::join(bev_right_road_edge_indexs_, ", "));
 
   BevLanesFilterByRoadEdges(bev_line_sorts_, bev_left_road_edge_indexs_, bev_right_road_edge_indexs_, bev_candidate_lanes_);
 
-  SD_BEV_PROCESS << fmt::format("After BevLanesFilterByRoadEdges: lanes size: {}", bev_candidate_lanes_.size());
+  HNOA_L3_LOG << fmt::format("After BevLanesFilterByRoadEdges: lanes size: {}", bev_candidate_lanes_.size());
 
   DivideBevSectionsByRoadEdges(bev_candidate_lanes_, bev_sections_);
 
-  SD_BEV_PROCESS << fmt::format("After DivideBevSectionsByRoadEdges: sections size: {}", bev_sections_.size());
+  HNOA_L3_LOG << fmt::format("After DivideBevSectionsByRoadEdges: sections size: {}", bev_sections_.size());
   for (size_t i = 0; i < bev_sections_.size(); ++i) {
-    SD_BEV_PROCESS << fmt::format("  Section {}: [{}]", i, fmt::join(bev_sections_[i], ", "));
+    HNOA_L3_LOG << fmt::format("  Section {}: [{}]", i, fmt::join(bev_sections_[i], ", "));
   }
 
   FilterBevBlockedLanes(bev_candidate_lanes_, bev_sections_);
 
-  SD_BEV_PROCESS << fmt::format("After FilterBevBlockedLanes: lanes size: {}", bev_candidate_lanes_.size());
+  HNOA_L3_LOG << fmt::format("After FilterBevBlockedLanes: lanes size: {}", bev_candidate_lanes_.size());
 
   bev_egoRoadEdgeIndexPair_ = GetEgoLeftRightRoadEdges(bev_line_sorts_, bev_left_road_edge_indexs_, bev_right_road_edge_indexs_);
 
-  SD_BEV_PROCESS << fmt::format("After GetEgoLeftRightRoadEdges: Left_EgoEdge_Index: {}, Right_EgoEdge_Index: {}",
-                                bev_egoRoadEdgeIndexPair_.first, bev_egoRoadEdgeIndexPair_.second);
+  HNOA_L3_LOG << fmt::format("After GetEgoLeftRightRoadEdges: Left_EgoEdge_Index: {}, Right_EgoEdge_Index: {}",
+                             bev_egoRoadEdgeIndexPair_.first, bev_egoRoadEdgeIndexPair_.second);
 
   std::vector<LineSort>      original_bev_line_sorts = bev_line_sorts_;
   std::vector<BevLaneMarker> filtered_virtual_edges;
 #if 0
   if (!diversion_zones.empty()) {
-    SD_BEV_PROCESS << fmt::format("Processing diversion zones (highway): {}", diversion_zones.size());
+    HNOA_L3_LOG << fmt::format("Processing diversion zones (highway): {}", diversion_zones.size());
     for (const auto &zone : diversion_zones) {
       if (zone.geos && zone.geos->size() == 4) {
-        SD_BEV_PROCESS << fmt::format(
+        HNOA_L3_LOG << fmt::format(
             "Diversion Zone ID: {}, Type: {}, Points: [({:.3f}, {:.3f}), ({:.3f}, {:.3f}), ({:.3f}, {:.3f}), ({:.3f}, {:.3f})]", zone.id,
             static_cast<int>(zone.type), (*zone.geos)[0].x(), (*zone.geos)[0].y(), (*zone.geos)[1].x(), (*zone.geos)[1].y(),
             (*zone.geos)[2].x(), (*zone.geos)[2].y(), (*zone.geos)[3].x(), (*zone.geos)[3].y());
       } else {
-        SD_BEV_PROCESS << fmt::format("Diversion Zone ID: {} has invalid geometry (size != 4)", zone.id);
+        HNOA_L3_LOG << fmt::format("Diversion Zone ID: {} has invalid geometry (size != 4)", zone.id);
       }
     }
     auto virtual_road_edges = bev_data_processor_.CreateVirtualRoadEdgesFromDiversionZones(diversion_zones);
     for (const auto &virtual_edge : virtual_road_edges) {
-      SD_BEV_PROCESS << fmt::format("virtual_edge: {}", virtual_edge);
+      HNOA_L3_LOG << fmt::format("virtual_edge: {}", virtual_edge);
     }
 
     for (const auto &ve : virtual_road_edges) {
       if (!ve.geos || ve.geos->empty()) {
-        SD_BEV_PROCESS << fmt::format("Virtual Edge ID: {} has invalid or empty geos, skipping.", ve.id);
+        HNOA_L3_LOG << fmt::format("Virtual Edge ID: {} has invalid or empty geos, skipping.", ve.id);
         continue;
       }
       // 过滤距离自车大于 60 米或者自车后方的虚拟路岩
       if (ve.geos->front().x() > 60.0) {
-        SD_BEV_PROCESS << fmt::format("Virtual Edge ID: {} filtered: closest x > 60m).", ve.id);
+        HNOA_L3_LOG << fmt::format("Virtual Edge ID: {} filtered: closest x > 60m).", ve.id);
         continue;
       }
       if (ve.geos->back().x() < 0.0) {
-        SD_BEV_PROCESS << fmt::format("Virtual Edge ID: {} filtered: end x < 0m).", ve.id);
+        HNOA_L3_LOG << fmt::format("Virtual Edge ID: {} filtered: end x < 0m).", ve.id);
         continue;
       }
       if (!bev_data_processor_.HasXOverlap(ve, bev_candidate_lanes_)) {
@@ -1038,20 +1034,20 @@ void SdNavigationHighway::BevMapProcess() {
       for (const auto &sort_tmp : bev_line_sorts_) {
         updated_sorts.push_back(fmt::format("[{}, {}]", sort_tmp.id, static_cast<int>(sort_tmp.is_road_boundary)));
       }
-      SD_BEV_PROCESS << fmt::format("Updated bev_line_sorts: [{}]", fmt::join(updated_sorts, " "));
+      HNOA_L3_LOG << fmt::format("Updated bev_line_sorts: [{}]", fmt::join(updated_sorts, " "));
 
-      SD_BEV_PROCESS << fmt::format("After diversion-zone re-division (HW): sections={}", bev_sections_.size());
+      HNOA_L3_LOG << fmt::format("After diversion-zone re-division (HW): sections={}", bev_sections_.size());
       for (size_t i = 0; i < bev_sections_.size(); ++i) {
-        SD_BEV_PROCESS << fmt::format("  Section {}: [{}]", i, fmt::join(bev_sections_[i], ", "));
+        HNOA_L3_LOG << fmt::format("  Section {}: [{}]", i, fmt::join(bev_sections_[i], ", "));
       }
     }
   }
 #else
 
   if (!ld_merge_points.empty()) {
-    SD_BEV_PROCESS << fmt::format("Processing map-based diversion points: {}", ld_merge_points.size());
+    HNOA_L3_LOG << fmt::format("Processing map-based diversion points: {}", ld_merge_points.size());
     // for (auto point : ld_merge_points) {
-    //   SD_BEV_PROCESS << "x:" << point.x() << " y:" << point.y();
+    //   HNOA_L3_LOG << "x:" << point.x() << " y:" << point.y();
     // }
 
     std::vector<BevLaneMarker> virtual_road_edges;
@@ -1067,27 +1063,26 @@ void SdNavigationHighway::BevMapProcess() {
 
       virtual_edge.geos->insert(virtual_edge.geos->end(), sorted_points.begin(), sorted_points.end());
       virtual_road_edges.push_back(virtual_edge);
-      SD_BEV_PROCESS << fmt::format("Created virtual edge from map points, start: ({:.3f}, {:.3f}), end: ({:.3f}, {:.3f})",
-                                    sorted_points.front().x(), sorted_points.front().y(), sorted_points.back().x(),
-                                    sorted_points.back().y());
+      HNOA_L3_LOG << fmt::format("Created virtual edge from map points, start: ({:.3f}, {:.3f}), end: ({:.3f}, {:.3f})",
+                                 sorted_points.front().x(), sorted_points.front().y(), sorted_points.back().x(), sorted_points.back().y());
     }
 
     for (const auto &virtual_edge : virtual_road_edges) {
-      SD_BEV_PROCESS << fmt::format("map_virtual_edge: {}", virtual_edge);
+      HNOA_L3_LOG << fmt::format("map_virtual_edge: {}", virtual_edge);
     }
 
     for (const auto &ve : virtual_road_edges) {
       if (!ve.geos || ve.geos->empty()) {
-        SD_BEV_PROCESS << fmt::format("Map Virtual Edge ID: {} has invalid or empty geos, skipping.", ve.id);
+        HNOA_L3_LOG << fmt::format("Map Virtual Edge ID: {} has invalid or empty geos, skipping.", ve.id);
         continue;
       }
       // 过滤距离自车大于 60 米或者自车后方的虚拟路岩
       if (ve.geos->front().x() > 60.0) {
-        SD_BEV_PROCESS << fmt::format("Map Virtual Edge ID: {} filtered: closest x > 60m).", ve.id);
+        HNOA_L3_LOG << fmt::format("Map Virtual Edge ID: {} filtered: closest x > 60m).", ve.id);
         continue;
       }
       if (ve.geos->back().x() < 0.0) {
-        SD_BEV_PROCESS << fmt::format("Map Virtual Edge ID: {} filtered: end x < 0m).", ve.id);
+        HNOA_L3_LOG << fmt::format("Map Virtual Edge ID: {} filtered: end x < 0m).", ve.id);
         continue;
       }
       if (!bev_data_processor_.HasXOverlap(ve, bev_candidate_lanes_)) {
@@ -1121,11 +1116,11 @@ void SdNavigationHighway::BevMapProcess() {
       for (const auto &sort_tmp : bev_line_sorts_) {
         updated_sorts.push_back(fmt::format("[{}, {}]", sort_tmp.id, static_cast<int>(sort_tmp.is_road_boundary)));
       }
-      SD_BEV_PROCESS << fmt::format("Updated bev_line_sorts: [{}]", fmt::join(updated_sorts, " "));
+      HNOA_L3_LOG << fmt::format("Updated bev_line_sorts: [{}]", fmt::join(updated_sorts, " "));
 
-      SD_BEV_PROCESS << fmt::format("After map-based diversion points re-division (HW): sections={}", bev_sections_.size());
+      HNOA_L3_LOG << fmt::format("After map-based diversion points re-division (HW): sections={}", bev_sections_.size());
       for (size_t i = 0; i < bev_sections_.size(); ++i) {
-        SD_BEV_PROCESS << fmt::format("  Section {}: [{}]", i, fmt::join(bev_sections_[i], ", "));
+        HNOA_L3_LOG << fmt::format("  Section {}: [{}]", i, fmt::join(bev_sections_[i], ", "));
       }
     }
   }
@@ -1136,7 +1131,7 @@ void SdNavigationHighway::BevMapProcess() {
   bev_ego_root_section_x0_.clear();
   auto merged              = MergeSectionLaneIdsLeft2Right(bev_sections_);
   bev_ego_root_section_x0_ = FindRootsAtX0AndSort(*bev_map_ptr, merged);
-  SD_FINE_MATCH_LOG << fmt::format("merged:[{}]  roots:[{}]", fmt::join(merged, ", "), fmt::join(bev_ego_root_section_x0_, ", "));
+  HNOA_L3_LOG << fmt::format("merged:[{}]  roots:[{}]", fmt::join(merged, ", "), fmt::join(bev_ego_root_section_x0_, ", "));
 }
 
 std::vector<uint64_t> SdNavigationHighway::MergeSectionLaneIdsLeft2Right(
@@ -1526,8 +1521,8 @@ void SdNavigationHighway::GetCandidateBevLanes(const std::vector<BevLaneInfo> &l
     }
   }
   if (ramp_nearby) {
-    SD_BEV_PROCESS << "Nearby ramp (-50~250m), "
-                      "relax short-mess front.x threshold: 40 -> 80";
+    HNOA_L3_LOG << "Nearby ramp (-50~250m), "
+                   "relax short-mess front.x threshold: 40 -> 80";
     front_x_threshold = kRampFrontXThresh;
   }
 
@@ -1556,7 +1551,7 @@ void SdNavigationHighway::GetCandidateBevLanes(const std::vector<BevLaneInfo> &l
       }
 
       if (bev_lane_info_tmp.geos->back().x() < -5) {
-        SD_BEV_PROCESS << fmt::format("Lane ID: {} filtered: end x < -5.", bev_lane_info_tmp.id);
+        HNOA_L3_LOG << fmt::format("Lane ID: {} filtered: end x < -5.", bev_lane_info_tmp.id);
         continue;
       }
       if (!has_suc_lanes_flag && !is_bev_short_mess_lane) {
@@ -1573,7 +1568,7 @@ bool SdNavigationHighway::IsValidRoadEdge(const BevLaneMarker &edge) {
   }
 
   if (edge.type == static_cast<uint32_t>(BoundaryType::FENCE_BOUNDARY)) {
-    SD_BEV_PROCESS << fmt::format("[Edge {}] FENCE_BOUNDARY (cone-like), skip as road-edge for section division.", edge.id);
+    HNOA_L3_LOG << fmt::format("[Edge {}] FENCE_BOUNDARY (cone-like), skip as road-edge for section division.", edge.id);
     return false;
   }
 
@@ -1585,13 +1580,13 @@ bool SdNavigationHighway::IsValidRoadEdge(const BevLaneMarker &edge) {
 
   // Filter road edges starting beyond 80m from ego vehicle
   if (edge.geos->front().x() > 80.0) {
-    SD_BEV_PROCESS << fmt::format("Edge ID: {} filtered: start x >80m.", edge.id);
+    HNOA_L3_LOG << fmt::format("Edge ID: {} filtered: start x >80m.", edge.id);
     return false;
   }
 
   //数据发现track提供的路岩存在Edge ID: 42, PointSize: 7255, StartPointX: -707.0023, StartPointY: -148.6161, EndPointX: 21.8407, EndPointY: -6.7597
   if (edge.geos->front().x() < -150.0) {
-    SD_BEV_PROCESS << fmt::format("Edge ID: {} filtered: start x < -150.", edge.id);
+    HNOA_L3_LOG << fmt::format("Edge ID: {} filtered: start x < -150.", edge.id);
     return false;
   }
 
@@ -1605,12 +1600,12 @@ bool SdNavigationHighway::IsValidRoadEdge(const BevLaneMarker &edge) {
   }
 
   if (length < 15.0) {  // 短线过滤
-    SD_BEV_PROCESS << fmt::format("Edge ID: {} filtered: length < 15 m.", edge.id);
+    HNOA_L3_LOG << fmt::format("Edge ID: {} filtered: length < 15 m.", edge.id);
     return false;
   }
 
   if (edge.geos->back().x() < 0) {
-    SD_BEV_PROCESS << fmt::format("Edge ID: {} filtered: end x < 0.", edge.id);
+    HNOA_L3_LOG << fmt::format("Edge ID: {} filtered: end x < 0.", edge.id);
     return false;
   }
 
@@ -1645,7 +1640,7 @@ bool SdNavigationHighway::HasCommonAncestor(const LineSort &l1, const LineSort &
   auto lane1 = INTERNAL_PARAMS.raw_bev_data.GetLaneInfoById(l1.id);
   auto lane2 = INTERNAL_PARAMS.raw_bev_data.GetLaneInfoById(l2.id);
   if (!lane1 || !lane2) {
-    SD_BEV_PROCESS << fmt::format("Error: Lane {} or Lane {} is invalid.", l1.id, l2.id);
+    HNOA_L3_LOG << fmt::format("Error: Lane {} or Lane {} is invalid.", l1.id, l2.id);
     return false;
   }
   ancestors_l1 = getAncestors(lane1);
@@ -1664,7 +1659,7 @@ void SdNavigationHighway::SortBevLaneInfoAndRoadEdges(const std::vector<BevLaneI
                                                       const std::vector<BevLaneMarker> &road_edges_in, std::vector<LineSort> &line_sorts,
                                                       std::vector<int> &left_road_edge_indexs, std::vector<int> &right_road_edge_indexs) {
   if (bev_lane_infos_in.size() >= 16) {
-    SD_BEV_PROCESS << fmt::format("bev_lane_infos_in size: {} > 16.", bev_lane_infos_in.size());
+    HNOA_L3_LOG << fmt::format("bev_lane_infos_in size: {} > 16.", bev_lane_infos_in.size());
     AWARN << "Input lane size too much, exit from SortBevLaneInfoAndRoadEdges";
     return;
   }
@@ -1689,8 +1684,8 @@ void SdNavigationHighway::SortBevLaneInfoAndRoadEdges(const std::vector<BevLaneI
                                                                         : LaneGeometry::PolynomialFitting(geo_x_vec, geo_y_vec, 3);
       laneinfo_geo_map[bev_lane_info_tmp->id] = {cur_full_geos, fitting};
       line_sorts.emplace_back(bev_lane_info_tmp->id, false);
-      SD_BEV_PROCESS << fmt::format("Lane ID: {}, y_at_0: {:.3f}, x-range: [{:.3f}, {:.3f}]", bev_lane_info_tmp->id, fitting.GetValue(0),
-                                    geo_x_vec.front(), geo_x_vec.back());
+      HNOA_L3_LOG << fmt::format("Lane ID: {}, y_at_0: {:.3f}, x-range: [{:.3f}, {:.3f}]", bev_lane_info_tmp->id, fitting.GetValue(0),
+                                 geo_x_vec.front(), geo_x_vec.back());
     }
   };
 
@@ -1743,11 +1738,11 @@ void SdNavigationHighway::SortBevLaneInfoAndRoadEdges(const std::vector<BevLaneI
     if (polynomial_fitting_l1 && polynomial_fitting_l2 && l1_geos && l2_geos) {
       bool has_common_ancestor = HasCommonAncestor(l1, l2);
       if (has_common_ancestor) {
-        SD_BEV_PROCESS << fmt::format("id1={} and id2={} has same ancestor", l1.id, l2.id);
+        HNOA_L3_LOG << fmt::format("id1={} and id2={} has same ancestor", l1.id, l2.id);
         auto lane1 = INTERNAL_PARAMS.raw_bev_data.GetLaneInfoById(l1.id);
         auto lane2 = INTERNAL_PARAMS.raw_bev_data.GetLaneInfoById(l2.id);
         if (!lane1 || !lane2) {
-          SD_BEV_PROCESS << fmt::format("Error: Lane {} or Lane {} is invalid.", l1.id, l2.id);
+          HNOA_L3_LOG << fmt::format("Error: Lane {} or Lane {} is invalid.", l1.id, l2.id);
           return false;
         }
         std::shared_ptr<std::vector<Eigen::Vector2f>> raw_geos_l1 = lane1->geos;
@@ -1759,8 +1754,8 @@ void SdNavigationHighway::SortBevLaneInfoAndRoadEdges(const std::vector<BevLaneI
 
         if (end_x > start_x) {
           bool res = LaneGeometry::JudgeIsLeft(*raw_geos_l1, *raw_geos_l2);
-          SD_BEV_PROCESS << fmt::format("JudgeIsLeft (has same ancestor and overlap): id1={} vs id2={} -> {} ", l1.id, l2.id,
-                                        res ? "left" : "right");
+          HNOA_L3_LOG << fmt::format("JudgeIsLeft (has same ancestor and overlap): id1={} vs id2={} -> {} ", l1.id, l2.id,
+                                     res ? "left" : "right");
           return res;
         } else {
           Eigen::Vector2f l1_center_pt(0, 0), l2_center_pt(0, 0);
@@ -1769,14 +1764,14 @@ void SdNavigationHighway::SortBevLaneInfoAndRoadEdges(const std::vector<BevLaneI
           l1_center_pt                = raw_geos_l1->at(l1_pts_size / 2);
           l2_center_pt                = raw_geos_l2->at(l2_pts_size / 2);
           bool res                    = l1_center_pt.y() > l2_center_pt.y();
-          SD_BEV_PROCESS << fmt::format(
+          HNOA_L3_LOG << fmt::format(
               "JudgeIsLeft (has same ancestor but has no overlap): id1={} centerPt.y={} vs id2={} centterPt.y={} -> {} ", l1.id,
               l1_center_pt.y(), l2.id, l2_center_pt.y(), res ? "left" : "right");
           return res;
         }
       } else {
         bool res = LaneGeometry::JudgeIsLeft(*l1_geos, *l2_geos, *polynomial_fitting_l1, *polynomial_fitting_l2);
-        SD_BEV_PROCESS << fmt::format("JudgeIsLeft: id1={} vs id2={} -> {}", l1.id, l2.id, res ? "left" : "right");
+        HNOA_L3_LOG << fmt::format("JudgeIsLeft: id1={} vs id2={} -> {}", l1.id, l2.id, res ? "left" : "right");
         return res;
       }
     } else {
@@ -1800,7 +1795,7 @@ void SdNavigationHighway::SortBevLaneInfoAndRoadEdges(const std::vector<BevLaneI
         } else if (i > ego_lane_index) {
           right_road_edge_indexs.push_back(i);
         }
-        // SD_BEV_PROCESS << fmt::format("line_sorts[{}].id: {} classified as {}", i, line_sorts[i].id,
+        // HNOA_L3_LOG << fmt::format("line_sorts[{}].id: {} classified as {}", i, line_sorts[i].id,
         //                               (i < ego_lane_index ? "left" : "right"));
       }
     }
@@ -2302,7 +2297,7 @@ EmergencyLaneInfo SdNavigationHighway::GetEmergencyLaneInfo() {
   // 获取自车位置信息
   uint64_t ego_section_id = ld_route_info->navi_start.section_id;
   double   ego_s_offset   = ld_route_info->navi_start.s_offset;
-  SD_COARSE_MATCH_LOG << "[GetEmergencyLaneInfo] Ego section ID: " << ego_section_id << ", Ego s_offset: " << ego_s_offset;
+  HNOA_L3_LOG << "[GetEmergencyLaneInfo] Ego section ID: " << ego_section_id << ", Ego s_offset: " << ego_s_offset;
 
   // 计算自车全局s坐标
   double ego_global_s      = 0.0;
@@ -2319,7 +2314,7 @@ EmergencyLaneInfo SdNavigationHighway::GetEmergencyLaneInfo() {
     AWARN << "[LDNOA] Failed: ego_section not found!";
     return result;
   }
-  SD_COARSE_MATCH_LOG << "[GetEmergencyLaneInfo] Ego global s: " << ego_global_s;
+  HNOA_L3_LOG << "[GetEmergencyLaneInfo] Ego global s: " << ego_global_s;
 
   // 定义检测范围
   const double min_s = rear_distance_;
@@ -2342,7 +2337,7 @@ EmergencyLaneInfo SdNavigationHighway::GetEmergencyLaneInfo() {
     if (section_end_s < ego_global_s + min_s || section_start_s > ego_global_s + max_s)
       continue;
 
-    //SD_COARSE_MATCH_LOG << "[GetEmergencyLaneInfo] Section ID: " << section.id
+    //HNOA_L3_LOG << "[GetEmergencyLaneInfo] Section ID: " << section.id
     //                    << " start s: " << section_start_s << " end s: " << section_end_s << "  section.laneids.size(): "<<section.lane_ids.size();
 
     std::vector<const cem::message::env_model::LaneInfo *> section_lanes;
@@ -2351,7 +2346,7 @@ EmergencyLaneInfo SdNavigationHighway::GetEmergencyLaneInfo() {
       auto lane_info = INTERNAL_PARAMS.ld_map_data.GetLDLaneInfoById(lane_id);
       if (lane_info) {
         section_lanes.push_back(lane_info);
-        //SD_COARSE_MATCH_LOG << "  [GetEmergencyLaneInfo] lane id:  " <<lane_id;
+        //HNOA_L3_LOG << "  [GetEmergencyLaneInfo] lane id:  " <<lane_id;
       }
     }
 
@@ -2382,7 +2377,7 @@ EmergencyLaneInfo SdNavigationHighway::GetEmergencyLaneInfo() {
         if (left_lane_count < section_lanes.size()) {
           left_lane_count = section_lanes.size();
         }
-        SD_COARSE_MATCH_LOG << "  Left emergency lane detected, range: [" << lane_start_s << ", " << lane_end_s << "]";
+        HNOA_L3_LOG << "  Left emergency lane detected, range: [" << lane_start_s << ", " << lane_end_s << "]";
       }
     }
 
@@ -2403,7 +2398,7 @@ EmergencyLaneInfo SdNavigationHighway::GetEmergencyLaneInfo() {
         if (right_lane_count < section_lanes.size()) {
           right_lane_count = section_lanes.size();
         }
-        SD_COARSE_MATCH_LOG << "  Right emergency lane detected, range: [" << lane_start_s << ", " << lane_end_s << "]";
+        HNOA_L3_LOG << "  Right emergency lane detected, range: [" << lane_start_s << ", " << lane_end_s << "]";
       }
     }
   }
@@ -2425,13 +2420,13 @@ EmergencyLaneInfo SdNavigationHighway::GetEmergencyLaneInfo() {
 
   // 调试日志
   if (result.right.exists) {
-    SD_COARSE_MATCH_LOG << "[GetEmergencyLaneInfo] Right emergency lane exists in merged ranges:";
+    HNOA_L3_LOG << "[GetEmergencyLaneInfo] Right emergency lane exists in merged ranges:";
     for (const auto &range : result.right.ranges) {
-      SD_COARSE_MATCH_LOG << "  [" << range.first << ", " << range.second << "]";
+      HNOA_L3_LOG << "  [" << range.first << ", " << range.second << "]";
     }
-    SD_COARSE_MATCH_LOG << "[GetEmergencyLaneInfo]  lane num: " << result.right.lane_num;
+    HNOA_L3_LOG << "[GetEmergencyLaneInfo]  lane num: " << result.right.lane_num;
   } else {
-    SD_COARSE_MATCH_LOG << "[GetEmergencyLaneInfo] No right emergency lane found.";
+    HNOA_L3_LOG << "[GetEmergencyLaneInfo] No right emergency lane found.";
   }
 
   return result;
@@ -2448,7 +2443,7 @@ void SdNavigationHighway::GetHarborStopInfo() {
   // 获取自车位置信息
   uint64_t ego_section_id = ld_route_info->navi_start.section_id;
   double   ego_s_offset   = ld_route_info->navi_start.s_offset;
-  SD_COARSE_MATCH_LOG << "[GetHarborStopInfo] Ego section ID: " << ego_section_id << ", Ego s_offset: " << ego_s_offset;
+  HNOA_L3_LOG << "[GetHarborStopInfo] Ego section ID: " << ego_section_id << ", Ego s_offset: " << ego_s_offset;
 
   // 计算自车全局s坐标
   double ego_global_s      = 0.0;
@@ -2465,7 +2460,7 @@ void SdNavigationHighway::GetHarborStopInfo() {
     AWARN << "[LDNOA] Failed: ego_section not found!";
     return;
   }
-  SD_COARSE_MATCH_LOG << "[GetHarborStopInfo] Ego global s: " << ego_global_s;
+  HNOA_L3_LOG << "[GetHarborStopInfo] Ego global s: " << ego_global_s;
 
   // 定义检测范围
   const double min_s = rear_distance_;   // -100.0
@@ -2493,7 +2488,7 @@ void SdNavigationHighway::GetHarborStopInfo() {
     if (section_end_s < ego_global_s + min_s || section_start_s > ego_global_s + max_s) {
       continue;
     }
-    //SD_COARSE_MATCH_LOG << "[GetHarborStopInfo] Section ID: " << section.id
+    //HNOA_L3_LOG << "[GetHarborStopInfo] Section ID: " << section.id
     //                   << " start s: " << section_start_s << " end s: " << section_end_s;
 
     // 收集当前section的所有车道,直接处理车道
@@ -2533,8 +2528,8 @@ void SdNavigationHighway::GetHarborStopInfo() {
             current_rightmost = true;
           }
 
-          SD_COARSE_MATCH_LOG << " [GetHarborStopInfo] Harbor stop lane detected, lane_seq: " << lane->lane_seq << ", range: ["
-                              << lane_start_s << ", " << lane_end_s << "]";
+          HNOA_L3_LOG << " [GetHarborStopInfo] Harbor stop lane detected, lane_seq: " << lane->lane_seq << ", range: [" << lane_start_s
+                      << ", " << lane_end_s << "]";
         }
       }
     }
@@ -2548,14 +2543,13 @@ void SdNavigationHighway::GetHarborStopInfo() {
 
   // 调试日志
   if (sd_harbor_stop_info_.exists) {
-    SD_COARSE_MATCH_LOG << "[GetHarborStopInfo] Harbor stop exists in merged ranges:";
+    HNOA_L3_LOG << "[GetHarborStopInfo] Harbor stop exists in merged ranges:";
     for (const auto &range : sd_harbor_stop_info_.ranges) {
-      SD_COARSE_MATCH_LOG << "  [" << range.first << ", " << range.second << "]";
+      HNOA_L3_LOG << "  [" << range.first << ", " << range.second << "]";
     }
-    SD_COARSE_MATCH_LOG << "  is_left_most: " << sd_harbor_stop_info_.is_left_most
-                        << ", is_right_most: " << sd_harbor_stop_info_.is_right_most;
+    HNOA_L3_LOG << "  is_left_most: " << sd_harbor_stop_info_.is_left_most << ", is_right_most: " << sd_harbor_stop_info_.is_right_most;
   } else {
-    SD_COARSE_MATCH_LOG << "[GetHarborStopInfo] No harbor stop found.";
+    HNOA_L3_LOG << "[GetHarborStopInfo] No harbor stop found.";
   }
 }
 
@@ -2750,11 +2744,10 @@ void SdNavigationHighway::GetLDJunctionInfos() {
 
   const auto                                                                &mpp_sections = ld_map_info->sections;
   std::unordered_map<uint64_t, const cem::message::env_model::SectionInfo *> section_map;
-  std::vector<uint64_t>navi_lane_ids;
+  std::vector<uint64_t>                                                      navi_lane_ids;
   for (const auto &section : mpp_sections) {
     section_map.insert({section.id, &section});
-    for(const auto laneid : section.lane_ids)
-    {
+    for (const auto laneid : section.lane_ids) {
       navi_lane_ids.emplace_back(laneid);
     }
   }
@@ -2835,9 +2828,6 @@ void SdNavigationHighway::GetLDJunctionInfos() {
       } else {
         break;
       }
-    }
-    if ((mpp_section.link_type & (uint32_t)LDLinkTypeMask::LT_TOLLBOOTH )== (uint32_t)LDLinkTypeMask::LT_TOLLBOOTH) {
-      break;
     }
     uint64_t erase_id = 0;
     bool     use_cur_section_end_points{false};
@@ -3471,7 +3461,7 @@ void SdNavigationHighway::GetLDJunctionInfos() {
                         SD_HIGHJUNCTION_CONVERTE_LOG << "lengh:" << length;
                         SD_HIGHJUNCTION_CONVERTE_LOG << "j:" << j;
                         uint64_t curr_id = cur_lane->id;
-                        cur_lane = pre_lane_info;
+                        cur_lane         = pre_lane_info;
                         if (length >= min_length || j >= 50) {
                           nums1++;
                           SD_HIGHJUNCTION_CONVERTE_LOG << "nums1" << nums1;
@@ -4143,7 +4133,7 @@ void SdNavigationHighway::FusionCurrentBevEmergencyLaneid(const std::vector<uint
       }
     }
   }
-  SD_COARSE_MATCH_LOG << "[FusionCurrentBevEmergencyLaneid] SDMAP RES  R:" << right_range.str() << "; L:" << left_range.str();
+  HNOA_L3_LOG << "[FusionCurrentBevEmergencyLaneid] SDMAP RES  R:" << right_range.str() << "; L:" << left_range.str();
 
   auto SDHasEMLane = [](const BevLaneInfo *bev_lane_info, const std::vector<std::pair<double, double>> &sd_ranges) -> bool {
     if (!bev_lane_info && bev_lane_info->geos->empty()) {
@@ -4153,35 +4143,34 @@ void SdNavigationHighway::FusionCurrentBevEmergencyLaneid(const std::vector<uint
     float end_x               = bev_lane_info->geos->back().x();
     float intersection_length = 0;
     for (auto &range_tmp : sd_ranges) {
-      SD_COARSE_MATCH_LOG << "[FusionCurrentBevEmergencyLaneid] range_tmp.first: " << range_tmp.first
-                          << "  range_tmp.second: " << range_tmp.second;
+      HNOA_L3_LOG << "[FusionCurrentBevEmergencyLaneid] range_tmp.first: " << range_tmp.first << "  range_tmp.second: " << range_tmp.second;
       if (range_tmp.first < end_x && range_tmp.second > start_x) {
         if (range_tmp.first < start_x) {
           if (range_tmp.second < end_x) {
             intersection_length += fabs(range_tmp.second - start_x);
-            SD_COARSE_MATCH_LOG << "[FusionCurrentBevEmergencyLaneid] intersection_length: " << intersection_length;
+            HNOA_L3_LOG << "[FusionCurrentBevEmergencyLaneid] intersection_length: " << intersection_length;
           } else {
             intersection_length += fabs(end_x - start_x);
-            SD_COARSE_MATCH_LOG << "[FusionCurrentBevEmergencyLaneid] intersection_length: " << intersection_length;
+            HNOA_L3_LOG << "[FusionCurrentBevEmergencyLaneid] intersection_length: " << intersection_length;
           }
         } else {
           if (range_tmp.second < end_x) {
             intersection_length += fabs(range_tmp.second - range_tmp.first);
-            SD_COARSE_MATCH_LOG << "[FusionCurrentBevEmergencyLaneid] intersection_length: " << intersection_length;
+            HNOA_L3_LOG << "[FusionCurrentBevEmergencyLaneid] intersection_length: " << intersection_length;
           } else {
             intersection_length += fabs(end_x - range_tmp.first);
-            SD_COARSE_MATCH_LOG << "[FusionCurrentBevEmergencyLaneid] intersection_length: " << intersection_length;
+            HNOA_L3_LOG << "[FusionCurrentBevEmergencyLaneid] intersection_length: " << intersection_length;
           }
         }
       }
     }
     if (fabs(end_x - start_x) > 5) {
       float rate = intersection_length / fabs(end_x - start_x);
-      SD_COARSE_MATCH_LOG << "[FusionCurrentBevEmergencyLaneid] start_x: " << start_x << "end_x: " << end_x;
-      SD_COARSE_MATCH_LOG << "[FusionCurrentBevEmergencyLaneid] intersection_length: " << intersection_length << "/end_x - start_x "
-                          << end_x - start_x << " = " << rate;
+      HNOA_L3_LOG << "[FusionCurrentBevEmergencyLaneid] start_x: " << start_x << "end_x: " << end_x;
+      HNOA_L3_LOG << "[FusionCurrentBevEmergencyLaneid] intersection_length: " << intersection_length << "/end_x - start_x "
+                  << end_x - start_x << " = " << rate;
       if (rate > 0.5) {
-        SD_COARSE_MATCH_LOG << "[FusionCurrentBevEmergencyLaneid] rate: " << rate << " > " << 0.5 << " SDHasEMLane: is true. ";
+        HNOA_L3_LOG << "[FusionCurrentBevEmergencyLaneid] rate: " << rate << " > " << 0.5 << " SDHasEMLane: is true. ";
         return true;
       }
     }
@@ -4196,17 +4185,17 @@ void SdNavigationHighway::FusionCurrentBevEmergencyLaneid(const std::vector<uint
       if (rightmost->lane_type == BevLaneType::LANE_TYPE_EMERGENCY) {
         current_right_bev_emergency_laneid = target_section.back();
         navi_debug_info.bev_emergency_id   = target_section.back();
-        SD_COARSE_MATCH_LOG << "[FusionCurrentBevEmergencyLaneid] : the right most lane is bev emergency lane.";
+        HNOA_L3_LOG << "[FusionCurrentBevEmergencyLaneid] : the right most lane is bev emergency lane.";
 
         /// 感知没有检出应急车道
       } else {
         if (rightmost->position != (int)BevLanePosition::LANE_LOC_EGO && rightmost->left_lane_marker_id != 0 &&
             rightmost->right_lane_marker_id != 0 && rightmost->previous_lane_ids.size() < 2 && firstRange.first < -20 &&
             firstRange.second > 0) {
-          SD_COARSE_MATCH_LOG << "[FusionCurrentBevEmergencyLaneid] rightmost valid check ok.."
-                              << "  rightmost->position: " << rightmost->position;
+          HNOA_L3_LOG << "[FusionCurrentBevEmergencyLaneid] rightmost valid check ok.."
+                      << "  rightmost->position: " << rightmost->position;
           if (SDHasEMLane(rightmost, sd_emergency_lane_info.right.ranges)) {
-            SD_COARSE_MATCH_LOG << "[FusionCurrentBevEmergencyLaneid] SDHasEMLane check ok > 50%  bev lane overlap..";
+            HNOA_L3_LOG << "[FusionCurrentBevEmergencyLaneid] SDHasEMLane check ok > 50%  bev lane overlap..";
             bool valid_flag          = true;
             auto left_lane_boundary  = INTERNAL_PARAMS.raw_bev_data.GetLaneBoundaryById(rightmost->left_lane_marker_id);
             auto right_lane_boundary = INTERNAL_PARAMS.raw_bev_data.GetLaneBoundaryById(rightmost->right_lane_marker_id);
@@ -4221,7 +4210,7 @@ void SdNavigationHighway::FusionCurrentBevEmergencyLaneid(const std::vector<uint
               }
               if (all_index_count != 0 && (float)dash_line_count / (float)all_index_count > 0.2) {
                 valid_flag = false;
-                SD_COARSE_MATCH_LOG << "[FusionCurrentBevEmergencyLaneid] emergency lane check fail cause > 20%  bev lane dashline..";
+                HNOA_L3_LOG << "[FusionCurrentBevEmergencyLaneid] emergency lane check fail cause > 20%  bev lane dashline..";
               }
             }
             if (right_lane_boundary) {
@@ -4235,14 +4224,14 @@ void SdNavigationHighway::FusionCurrentBevEmergencyLaneid(const std::vector<uint
                   }
                 }
               }
-              SD_COARSE_MATCH_LOG << "[FusionCurrentBevEmergencyLaneid] : the dis right most lane to right bdry: " << dist2rightRoadEdge;
+              HNOA_L3_LOG << "[FusionCurrentBevEmergencyLaneid] : the dis right most lane to right bdry: " << dist2rightRoadEdge;
               if (dist2rightRoadEdge > 1) {
                 valid_flag = false;
               }
             }
             if (valid_flag) {
               current_right_bev_emergency_laneid = target_section.back();
-              SD_COARSE_MATCH_LOG << "[FusionCurrentBevEmergencyLaneid] : emergency_laneid: " << current_right_bev_emergency_laneid;
+              HNOA_L3_LOG << "[FusionCurrentBevEmergencyLaneid] : emergency_laneid: " << current_right_bev_emergency_laneid;
             }
           }
         }
@@ -4254,21 +4243,21 @@ void SdNavigationHighway::FusionCurrentBevEmergencyLaneid(const std::vector<uint
   {
     auto leftmost = INTERNAL_PARAMS.raw_bev_data.GetLaneInfoById(target_section.front());
     if (leftmost) {
-      SD_COARSE_MATCH_LOG << "[FusionCurrentBevEmergencyLaneid] leftmost->position: " << leftmost->position
-                          << "selected_section_index: " << selected_section_index;
+      HNOA_L3_LOG << "[FusionCurrentBevEmergencyLaneid] leftmost->position: " << leftmost->position
+                  << "selected_section_index: " << selected_section_index;
       /// 感知检出应急车道
       if (leftmost->lane_type == BevLaneType::LANE_TYPE_EMERGENCY) {
         current_left_bev_emergency_laneid = target_section.front();
         navi_debug_info.bev_emergency_id  = target_section.front();
-        SD_COARSE_MATCH_LOG << "[FusionCurrentBevEmergencyLaneid] : the left most lane is bev emergency lane.";
+        HNOA_L3_LOG << "[FusionCurrentBevEmergencyLaneid] : the left most lane is bev emergency lane.";
 
         /// 感知没有检出应急车道 //CNOAC2-65271
       } else {
         if (leftmost->position != (int)BevLanePosition::LANE_LOC_EGO && leftmost->left_lane_marker_id != 0 && selected_section_index == 0 &&
             leftmost->right_lane_marker_id != 0 && leftmost->previous_lane_ids.size() < 2) {
-          SD_COARSE_MATCH_LOG << "[FusionCurrentBevEmergencyLaneid] leftmost->position: " << leftmost->position << " is not ego : 0";
+          HNOA_L3_LOG << "[FusionCurrentBevEmergencyLaneid] leftmost->position: " << leftmost->position << " is not ego : 0";
           if (SDHasEMLane(leftmost, sd_emergency_lane_info.left.ranges)) {
-            SD_COARSE_MATCH_LOG << "[FusionCurrentBevEmergencyLaneid] SDHasEMLane check ok > 50%  bev lane overlap..";
+            HNOA_L3_LOG << "[FusionCurrentBevEmergencyLaneid] SDHasEMLane check ok > 50%  bev lane overlap..";
             bool valid_flag          = true;
             auto left_lane_boundary  = INTERNAL_PARAMS.raw_bev_data.GetLaneBoundaryById(leftmost->left_lane_marker_id);
             auto right_lane_boundary = INTERNAL_PARAMS.raw_bev_data.GetLaneBoundaryById(leftmost->right_lane_marker_id);
@@ -4283,7 +4272,7 @@ void SdNavigationHighway::FusionCurrentBevEmergencyLaneid(const std::vector<uint
               }
               if (all_index_count != 0 && (float)dash_line_count / (float)all_index_count > 0.2) {
                 valid_flag = false;
-                SD_COARSE_MATCH_LOG << "[FusionCurrentBevEmergencyLaneid] emergency lane check fail cause > 20%  bev lane dashline..";
+                HNOA_L3_LOG << "[FusionCurrentBevEmergencyLaneid] emergency lane check fail cause > 20%  bev lane dashline..";
               }
             }
             if (left_lane_boundary) {
@@ -4297,14 +4286,14 @@ void SdNavigationHighway::FusionCurrentBevEmergencyLaneid(const std::vector<uint
                   }
                 }
               }
-              SD_COARSE_MATCH_LOG << "[FusionCurrentBevEmergencyLaneid] : the dis left most lane to left bdry: " << dist2leftRoadEdge;
+              HNOA_L3_LOG << "[FusionCurrentBevEmergencyLaneid] : the dis left most lane to left bdry: " << dist2leftRoadEdge;
               if (dist2leftRoadEdge > 1) {
                 valid_flag = false;
               }
             }
             if (valid_flag) {
               current_left_bev_emergency_laneid = target_section.front();
-              SD_COARSE_MATCH_LOG << "[FusionCurrentBevEmergencyLaneid] : emergency_laneid: " << current_left_bev_emergency_laneid;
+              HNOA_L3_LOG << "[FusionCurrentBevEmergencyLaneid] : emergency_laneid: " << current_left_bev_emergency_laneid;
             }
           }
         }
@@ -4374,12 +4363,12 @@ int SdNavigationHighway::GetLDSectionMinLaneNumNOTEmergency(const cem::message::
 void SdNavigationHighway::SetLdRecommendLane() {
   const auto ld_map_info = INTERNAL_PARAMS.ld_map_data.GetLDRouteInfoPtr();
   if (!ld_map_info) {
-    // SD_FINE_MATCH_LOG << "ld_map_info is null";
+    // HNOA_L3_LOG << "ld_map_info is null";
     return;
   }
   const auto &mpp_sections = ld_map_info->sections;
   if (mpp_sections.empty()) {
-    // SD_FINE_MATCH_LOG << "mpp_sections is empty";
+    // HNOA_L3_LOG << "mpp_sections is empty";
     return;
   }
   uint64_t   ego_section_id  = ld_map_info->navi_start.section_id;
@@ -4401,8 +4390,8 @@ void SdNavigationHighway::SetLdRecommendLane() {
     ego_s_global += mpp_sections[i].length;
   }
   ego_s_global += ego_s_offset;
-  SD_FINE_MATCH_LOG << "[GetLdRecommendLane] Ego section ID: " << ego_section_id << ", Ego s_offset: " << ego_s_offset
-                    << ", Ego s_global: " << ego_s_global;
+  HNOA_L3_LOG << "[GetLdRecommendLane] Ego section ID: " << ego_section_id << ", Ego s_offset: " << ego_s_offset
+              << ", Ego s_global: " << ego_s_global;
 
   double current_s = 0.0;
   double min_s     = -50;
@@ -4416,7 +4405,7 @@ void SdNavigationHighway::SetLdRecommendLane() {
       current_s += section.length;
       continue;
     }
-    SD_FINE_MATCH_LOG << "Section ID: " << section.id << " start from s: " << section_start_s << " to: " << section_end_s;
+    HNOA_L3_LOG << "Section ID: " << section.id << " start from s: " << section_start_s << " to: " << section_end_s;
     const auto                            &lane_id = section.lane_ids;
     cem::fusion::navigation::RecommendLane recommend_info;
     if (i >= 1) {
@@ -4451,13 +4440,13 @@ void SdNavigationHighway::SetLdRecommendLane() {
   for (const auto &recommend_lane : map_ld_recommend_lane_) {
     const double rm_start_ego   = recommend_lane.first;
     const auto  &recommend_info = recommend_lane.second;
-    SD_FINE_MATCH_LOG << "section_id = " << recommend_info.section_id << ", lane_start_offset = " << recommend_info.start_offset
-                      << ", lane_end_offset = " << recommend_info.end_offset << ", lane_num = " << recommend_info.lane_num;
+    HNOA_L3_LOG << "section_id = " << recommend_info.section_id << ", lane_start_offset = " << recommend_info.start_offset
+                << ", lane_end_offset = " << recommend_info.end_offset << ", lane_num = " << recommend_info.lane_num;
     for (const auto &lane_id : recommend_info.lane_ids) {
-      SD_FINE_MATCH_LOG << "lane_id: " << lane_id;
+      HNOA_L3_LOG << "lane_id: " << lane_id;
     }
     for (const auto &lane_seq : recommend_info.lane_seqs) {
-      SD_FINE_MATCH_LOG << "lane_seq: " << lane_seq;
+      HNOA_L3_LOG << "lane_seq: " << lane_seq;
     }
   }
 
@@ -4475,17 +4464,17 @@ void SdNavigationHighway::SetLdRecommendLane() {
     }
   }
 
-  SD_FINE_MATCH_LOG << "Merge Duplicate RecommendLanes";
+  HNOA_L3_LOG << "Merge Duplicate RecommendLanes";
   for (const auto &recommend_lane : map_ld_recommend_lane_) {
     const double rm_start_ego   = recommend_lane.first;
     const auto  &recommend_info = recommend_lane.second;
-    SD_FINE_MATCH_LOG << "section_id = " << recommend_info.section_id << ", lane_start_offset = " << recommend_info.start_offset
-                      << ", lane_end_offset = " << recommend_info.end_offset << ", lane_num = " << recommend_info.lane_num;
+    HNOA_L3_LOG << "section_id = " << recommend_info.section_id << ", lane_start_offset = " << recommend_info.start_offset
+                << ", lane_end_offset = " << recommend_info.end_offset << ", lane_num = " << recommend_info.lane_num;
     for (const auto &lane_id : recommend_info.lane_ids) {
-      SD_FINE_MATCH_LOG << "lane_id: " << lane_id;
+      HNOA_L3_LOG << "lane_id: " << lane_id;
     }
     for (const auto &lane_id : recommend_info.lane_seqs) {
-      SD_FINE_MATCH_LOG << "lane_seqs: " << lane_id;
+      HNOA_L3_LOG << "lane_seqs: " << lane_id;
     }
   }
 }
@@ -4499,12 +4488,12 @@ void SdNavigationHighway::SelectGuideLanesWithLd(const std::vector<uint64_t>    
   guide_lane_result.clear();
   sd_guide_lane_ids.clear();
   if (bev_ego_root_section_x0.empty() || ld_recommend_lane.empty()) {
-    SD_FINE_MATCH_LOG << "bev or ld is empty, return: " << bev_ego_root_section_x0.empty() << ", " << ld_recommend_lane.empty();
+    HNOA_L3_LOG << "bev or ld is empty, return: " << bev_ego_root_section_x0.empty() << ", " << ld_recommend_lane.empty();
     return;
   }
 
   for (auto &bev_ego_id : bev_ego_root_section_x0) {
-    SD_FINE_MATCH_LOG << "bev_ego_id: " << bev_ego_id;
+    HNOA_L3_LOG << "bev_ego_id: " << bev_ego_id;
   }
 
   RecommendLane ld_target_lane;
@@ -4543,14 +4532,14 @@ void SdNavigationHighway::SelectGuideLanesWithLd(const std::vector<uint64_t>    
       for (auto it = it_target_lane; it != ld_recommend_lane.end(); ++it) {
         if ((it->second.lane_num == bev_ego_lane_num) && (it->first < kLdGuideRemmRange)) {
           // case1:自车脚下未匹配，合理范围内匹配上
-          SD_FINE_MATCH_LOG << "Case1: bev and ld lane num match at a distance";
+          HNOA_L3_LOG << "Case1: bev and ld lane num match at a distance";
           ld_target_lane     = it->second;
           ld_match_from_left = true;
           break;
         }
         // case2:合理范围未匹配上，且地图和感知车道数相差较大
         if ((std::next(it) == ld_recommend_lane.end()) && (lane_num_diff > 1)) {
-          int ego_bev_id = -1, ego_bev_index = -1;
+          int ego_bev_id = 0, ego_bev_index = -1;
           for (auto &bev_root_id : bev_ego_root_section_x0) {
             auto lane_r = INTERNAL_PARAMS.raw_bev_data.GetLaneInfoById(bev_root_id);
             if (!lane_r) {
@@ -4563,7 +4552,7 @@ void SdNavigationHighway::SelectGuideLanesWithLd(const std::vector<uint64_t>    
               int nearest_index = lane_r->indexed_geos.FindNearestPoint(0.0, 0.0);
               if (nearest_index >= 0 && nearest_index < static_cast<int>(lane_r->geos->size())) {
                 double lane_distance = fabs(0.0 - lane_r->geos->at(nearest_index).y());
-                SD_FINE_MATCH_LOG << "lane_distance: " << lane_distance;
+                HNOA_L3_LOG << "lane_distance: " << lane_distance;
                 if (lane_distance < nearest_distance) {
                   nearest_distance = lane_distance;
                   ego_bev_id       = bev_root_id;
@@ -4571,7 +4560,7 @@ void SdNavigationHighway::SelectGuideLanesWithLd(const std::vector<uint64_t>    
               }
             }
           }
-          SD_FINE_MATCH_LOG << "ego_bev_id: " << ego_bev_id;
+          HNOA_L3_LOG << "ego_bev_id: " << ego_bev_id;
           auto it = std::find(bev_ego_root_section_x0.begin(), bev_ego_root_section_x0.end(), ego_bev_id);
           if (it != bev_ego_root_section_x0.end()) {
             ego_bev_index = std::distance(bev_ego_root_section_x0.begin(), it);
@@ -4583,12 +4572,12 @@ void SdNavigationHighway::SelectGuideLanesWithLd(const std::vector<uint64_t>    
           } else {
             ld_match_from_left = true;
           }
-          SD_FINE_MATCH_LOG << "Case2: bev and ld lane num not match";
+          HNOA_L3_LOG << "Case2: bev and ld lane num not match";
         }
       }
     }
   }
-  SD_FINE_MATCH_LOG << "section_id: " << ld_target_lane.section_id;
+  HNOA_L3_LOG << "section_id: " << ld_target_lane.section_id;
   std::vector<int> ego_lane_index_left, ego_lane_index_right;
   ego_lane_index_left.reserve(bev_ego_root_section_x0.size());
   // ego_lane_index_right.reserve(bev_ego_root_section_x0.size());
@@ -4598,19 +4587,19 @@ void SdNavigationHighway::SelectGuideLanesWithLd(const std::vector<uint64_t>    
     // 1);
   }
   // for (auto &lane_left : ego_lane_index_left) {
-  //   SD_FINE_MATCH_LOG << "lane_left: " << int(lane_left);
+  //   HNOA_L3_LOG << "lane_left: " << int(lane_left);
   // }
   // for (auto &lane_right : ego_lane_index_right) {
-  //   SD_FINE_MATCH_LOG << "lane_right: " << int(lane_right);
+  //   HNOA_L3_LOG << "lane_right: " << int(lane_right);
   // }
 
   for (auto &ld_target_index : ld_target_lane.lane_seqs) {
-    SD_FINE_MATCH_LOG << "ld_target_index: " << ld_target_index;
+    HNOA_L3_LOG << "ld_target_index: " << ld_target_index;
     if (ld_match_from_left) {
       auto find_bev = std::find(ego_lane_index_left.begin(), ego_lane_index_left.end(), ld_target_index);
       if (find_bev != ego_lane_index_left.end()) {
         auto &bev_road_id = bev_ego_root_section_x0.at(std::distance(ego_lane_index_left.begin(), find_bev));
-        SD_FINE_MATCH_LOG << "from left bev_road_id: " << bev_road_id;
+        HNOA_L3_LOG << "from left bev_road_id: " << bev_road_id;
         bev_guide_lanes_with_ld.insert(bev_road_id);
       } else {
         auto find_closest =
@@ -4619,7 +4608,7 @@ void SdNavigationHighway::SelectGuideLanesWithLd(const std::vector<uint64_t>    
             });
         if (find_closest != ego_lane_index_left.end()) {
           auto &bev_road_id = bev_ego_root_section_x0.at(std::distance(ego_lane_index_left.begin(), find_closest));
-          SD_FINE_MATCH_LOG << "from left closest bev_road_id: " << bev_road_id;
+          HNOA_L3_LOG << "from left closest bev_road_id: " << bev_road_id;
           bev_guide_lanes_with_ld.insert(bev_road_id);
         }
       }
@@ -4628,12 +4617,12 @@ void SdNavigationHighway::SelectGuideLanesWithLd(const std::vector<uint64_t>    
           bev_ego_root_section_x0.end() - std::min(ld_target_lane.lane_num, bev_ego_root_section_x0.size()), bev_ego_root_section_x0.end());
       for (int i = 1; i <= bev_ego_root_section_x0_right.size(); ++i) {
         ego_lane_index_right.emplace_back(i);
-        SD_FINE_MATCH_LOG << "bev_ego_id_right: " << bev_ego_root_section_x0_right.at(i - 1);
+        HNOA_L3_LOG << "bev_ego_id_right: " << bev_ego_root_section_x0_right.at(i - 1);
       }
       auto find_bev = std::find(ego_lane_index_right.begin(), ego_lane_index_right.end(), ld_target_index);
       if (find_bev != ego_lane_index_right.end()) {
         auto &bev_road_id = bev_ego_root_section_x0_right.at(std::distance(ego_lane_index_right.begin(), find_bev));
-        SD_FINE_MATCH_LOG << "from right bev_road_id: " << bev_road_id;
+        HNOA_L3_LOG << "from right bev_road_id: " << bev_road_id;
         bev_guide_lanes_with_ld.insert(bev_road_id);
       } else {
         auto find_closest =
@@ -4642,7 +4631,7 @@ void SdNavigationHighway::SelectGuideLanesWithLd(const std::vector<uint64_t>    
             });
         if (find_closest != ego_lane_index_right.end()) {
           auto &bev_road_id = bev_ego_root_section_x0_right.at(std::distance(ego_lane_index_right.begin(), find_closest));
-          SD_FINE_MATCH_LOG << "from right closest bev_road_id: " << bev_road_id;
+          HNOA_L3_LOG << "from right closest bev_road_id: " << bev_road_id;
           bev_guide_lanes_with_ld.insert(bev_road_id);
         }
       }
@@ -4696,7 +4685,7 @@ void SdNavigationHighway::SelectGuideLanesWithLd(const std::vector<uint64_t>    
   for (auto guide_laneid_tmp : sd_guide_lane_ids) {
     os1 << guide_laneid_tmp << ",";
   }
-  SD_FINE_MATCH_LOG << "[SelectGuideLanesWithLd]  : " << os1.str();
+  HNOA_L3_LOG << "[SelectGuideLanesWithLd]  : " << os1.str();
   navi_debug_infos.guide_laneids_refer = sd_guide_lane_ids;
 }
 
@@ -4728,7 +4717,7 @@ void SdNavigationHighway::HoldGuideLanes(const std::vector<std::vector<uint64_t>
   for (const auto &lane : bev_sections_in)
     bev_sections_out.insert(bev_sections_out.end(), lane.begin(), lane.end());
   for (const auto &bev_lane : bev_sections_out) {
-    SD_FINE_MATCH_LOG << "bev_sections_out: " << bev_lane;
+    HNOA_L3_LOG << "bev_sections_out: " << bev_lane;
   }
   auto &navi_debug_info                            = INTERNAL_PARAMS.navigation_info_data.navi_debug_infos();
   navi_debug_info.enter_hold_lanes_flag            = false;
@@ -4758,14 +4747,14 @@ void SdNavigationHighway::HoldGuideLanes(const std::vector<std::vector<uint64_t>
         active_last_ego_guide_ = false;
         ego_executed           = true;
       }
-      SD_FINE_MATCH_LOG << "case1_enter_counter: " << case1_enter_counter;
+      HNOA_L3_LOG << "case1_enter_counter: " << case1_enter_counter;
       if (++case1_enter_counter >= kCase1_enter_thres) {
         active_last_ego_guide_ = true;
       } else {
         active_last_ego_guide_ = false;
       }
     } else if ((active_last_ego_guide_) && (++case1_active_counter < kCase1_active_thres) && ego_no_topo) {
-      SD_FINE_MATCH_LOG << "case1_active_counter: " << case1_active_counter;
+      HNOA_L3_LOG << "case1_active_counter: " << case1_active_counter;
       auto rank = [&bev_sections_out](uint64_t lane_id) -> size_t {
         auto it = std::find(bev_sections_out.begin(), bev_sections_out.end(), lane_id);
         return it == bev_sections_out.end() ? SIZE_MAX : static_cast<size_t>(it - bev_sections_out.begin());
@@ -4813,7 +4802,7 @@ void SdNavigationHighway::HoldGuideLanes(const std::vector<std::vector<uint64_t>
           break;
         }
       }
-      SD_FINE_MATCH_LOG << "Case 1: Append ego lane to guide result";
+      HNOA_L3_LOG << "Case 1: Append ego lane to guide result";
     } else {
       case1_enter_counter    = 1;
       case1_active_counter   = 1;
@@ -4848,11 +4837,11 @@ void SdNavigationHighway::HoldGuideLanes(const std::vector<std::vector<uint64_t>
       active_hist_guide_   = false;
       executed             = true;
     }
-    SD_FINE_MATCH_LOG << "single_no_next: " << single_no_next;
-    SD_FINE_MATCH_LOG << "curr_guide_id: " << curr_guide_id;
-    SD_FINE_MATCH_LOG << "hist_guide_id_: " << hist_guide_id_;
+    HNOA_L3_LOG << "single_no_next: " << single_no_next;
+    HNOA_L3_LOG << "curr_guide_id: " << curr_guide_id;
+    HNOA_L3_LOG << "hist_guide_id_: " << hist_guide_id_;
     if (single_no_next && curr_guide_id == hist_guide_id_) {
-      SD_FINE_MATCH_LOG << "case2_enter_counter: " << case2_enter_counter;
+      HNOA_L3_LOG << "case2_enter_counter: " << case2_enter_counter;
       if (++case2_enter_counter >= kCase2_enter_thres) {
         active_hist_guide_ = true;
       } else {
@@ -4861,10 +4850,10 @@ void SdNavigationHighway::HoldGuideLanes(const std::vector<std::vector<uint64_t>
     } else if (active_hist_guide_ && single_no_next) {
       bool find_hist_id = std::find(bev_sections_out.begin(), bev_sections_out.end(), hist_guide_id_) != bev_sections_out.end();
       bool is_left_curr = IsLeftGuidePos(bev_sections_out, curr_guide_id, hist_guide_id_);
-      SD_FINE_MATCH_LOG << "find_hist_id: " << find_hist_id;
-      SD_FINE_MATCH_LOG << "is_left_curr: " << is_left_curr;
+      HNOA_L3_LOG << "find_hist_id: " << find_hist_id;
+      HNOA_L3_LOG << "is_left_curr: " << is_left_curr;
       if (find_hist_id && is_left_curr && ++case2_active_counter < kCase2_active_thres) {
-        SD_FINE_MATCH_LOG << "case2_active_counter: " << case2_active_counter;
+        HNOA_L3_LOG << "case2_active_counter: " << case2_active_counter;
         guide_laneids_ref.clear();
         guide_laneids_ref.emplace_back(hist_guide_id_);
         for (size_t i = 0; i < guide_lane_result.size(); ++i) {
@@ -4885,7 +4874,7 @@ void SdNavigationHighway::HoldGuideLanes(const std::vector<std::vector<uint64_t>
             break;
           }
         }
-        SD_FINE_MATCH_LOG << "Case 2: Replace hist lane to guide result";
+        HNOA_L3_LOG << "Case 2: Replace hist lane to guide result";
       } else {
         case2_enter_counter  = 1;
         case2_active_counter = 1;
@@ -4901,7 +4890,7 @@ void SdNavigationHighway::HoldGuideLanes(const std::vector<std::vector<uint64_t>
   }
 
   for (auto &[id, wi] : guide_lane_result)
-    SD_FINE_MATCH_LOG << id << ":{" << wi.first << "," << wi.second << "} ";
+    HNOA_L3_LOG << id << ":{" << wi.first << "," << wi.second << "} ";
 
   navi_debug_info.hold_guide_lanes   = guide_laneids_ref;
   navi_debug_info.hold_guides_length = hold_guides_length;
@@ -4959,8 +4948,8 @@ void SdNavigationHighway::SetBevAccAdjLane(BevMapInfo &bev_map, const uint64_t &
         bev_map_lane->merge_start_dis = mergeStart;
         bev_map_lane->merge_end_dis   = mergeEnd;
 
-        SD_COARSE_MATCH_LOG << "  [SetBevAccAdjLane] Setting  BEV lane ID: " << AccAdjLane_id << " to LANE_ACC_ADJ"
-                            << " merge_start_dis: " << mergeStart << " mergeEnd: " << mergeEnd;
+        HNOA_L3_LOG << "  [SetBevAccAdjLane] Setting  BEV lane ID: " << AccAdjLane_id << " to LANE_ACC_ADJ"
+                    << " merge_start_dis: " << mergeStart << " mergeEnd: " << mergeEnd;
       }
     }
   } else if (AccAdjLane_id != 0 && merge_jct.junction_id != 0 && merge_jct.offset < 800) {
@@ -4973,8 +4962,8 @@ void SdNavigationHighway::SetBevAccAdjLane(BevMapInfo &bev_map, const uint64_t &
       bev_map_lane->merge_start_dis = merge_jct.offset;
       bev_map_lane->merge_end_dis   = merge_jct.offset;
 
-      SD_COARSE_MATCH_LOG << "  [SetBevAccAdjLane] Setting  BEV lane ID: " << AccAdjLane_id << " to LANE_ACC_ADJ"
-                          << " merge_start_dis: " << merge_jct.offset << " mergeEnd: " << merge_jct.offset;
+      HNOA_L3_LOG << "  [SetBevAccAdjLane] Setting  BEV lane ID: " << AccAdjLane_id << " to LANE_ACC_ADJ"
+                  << " merge_start_dis: " << merge_jct.offset << " mergeEnd: " << merge_jct.offset;
     }
   } else {
   }
@@ -5029,11 +5018,8 @@ void SdNavigationHighway::SetNaviInterfaceAndDebugInfos(BevMapInfoPtr &GlobalBev
   debug_json["bev_emergency_id"]   = navi_debug_info.bev_emergency_id;
   std::string debug_str            = debug_json.dump();
   // AINFO << "===json:" << debug_str;
-  SD_BEV_PROCESS << "===json:" << debug_str;
-  SD_COARSE_MATCH_LOG << "===json:" << debug_str;
+  HNOA_L3_LOG << "===json:" << debug_str;
   SD_ENV_INFO_LOG << "===json:" << debug_str;
-  SD_MERGE_LOG << "===json:" << debug_str;
-  SD_FINE_MATCH_LOG << "===json:" << debug_str;
   GlobalBevMapOutPut->debug_infos = debug_str;
 }
 /*
@@ -5042,44 +5028,44 @@ void SdNavigationHighway::SetNaviInterfaceAndDebugInfos(BevMapInfoPtr &GlobalBev
 void SdNavigationHighway::Edge_log_print(const std::vector<BevLaneMarker> &all_bev_road_edges) {
   for (const auto edge : all_bev_road_edges) {
     if (!edge.geos->empty()) {
-      SD_COARSE_MATCH_LOG << "edge_lane_id: " << edge.id << " edge_start_x: " << edge.geos->front().x()
-                          << " edge_start_y: " << edge.geos->front().y() << " ledge_end_x: " << edge.geos->back().x()
-                          << " edge_end_y: " << edge.geos->back().y();
+      HNOA_L3_LOG << "edge_lane_id: " << edge.id << " edge_start_x: " << edge.geos->front().x()
+                  << " edge_start_y: " << edge.geos->front().y() << " ledge_end_x: " << edge.geos->back().x()
+                  << " edge_end_y: " << edge.geos->back().y();
       switch (edge.road_edeg_pos) {
         case BevRoadEdgePosition::BEV_REP__UNKNOWN:
-          SD_COARSE_MATCH_LOG << "BEV_REP__UNKNOWN ";
+          HNOA_L3_LOG << "BEV_REP__UNKNOWN ";
           break;
         case BevRoadEdgePosition::BEV_REP__LEFT:
-          SD_COARSE_MATCH_LOG << "BEV_REP__LEFT";
+          HNOA_L3_LOG << "BEV_REP__LEFT";
           break;
         case BevRoadEdgePosition::BEV_REP__RIGHT:
-          SD_COARSE_MATCH_LOG << "BEV_REP__RIGHT ";
+          HNOA_L3_LOG << "BEV_REP__RIGHT ";
           break;
         default:
-          SD_COARSE_MATCH_LOG << "BEV_REP__UNKNOWN ";
+          HNOA_L3_LOG << "BEV_REP__UNKNOWN ";
           break;
       }
       switch (edge.type) {
         case 0:
-          SD_COARSE_MATCH_LOG << "UNKNOWN_BOUNDARY ";
+          HNOA_L3_LOG << "UNKNOWN_BOUNDARY ";
           break;
         case 1:
-          SD_COARSE_MATCH_LOG << "FLAT_BOUNDARY";
+          HNOA_L3_LOG << "FLAT_BOUNDARY";
           break;
         case 2:
-          SD_COARSE_MATCH_LOG << "LOW_BOUNDARY ";
+          HNOA_L3_LOG << "LOW_BOUNDARY ";
           break;
-          case 3:
-          SD_COARSE_MATCH_LOG << "HIGH_BOUNDARY ";
+        case 3:
+          HNOA_L3_LOG << "HIGH_BOUNDARY ";
           break;
-          case 4:
-          SD_COARSE_MATCH_LOG << "FENCE_BOUNDARY ";
+        case 4:
+          HNOA_L3_LOG << "FENCE_BOUNDARY ";
           break;
-          case 12:
-          SD_COARSE_MATCH_LOG << "FENCE_BOUNDARY ";
+        case 12:
+          HNOA_L3_LOG << "FENCE_BOUNDARY ";
           break;
         default:
-          SD_COARSE_MATCH_LOG << "VIRTUAL ";
+          HNOA_L3_LOG << "VIRTUAL ";
           break;
       }
 
@@ -5089,7 +5075,7 @@ void SdNavigationHighway::Edge_log_print(const std::vector<BevLaneMarker> &all_b
         const auto &bdry_points = *(edge.geos);
         for (size_t i = 0; i < bdry_points.size(); ++i) {
           const Eigen::Vector2f &point = bdry_points[i];
-          SD_COARSE_MATCH_LOG << "点 " << i << ": (" << point.x() << ", " << point.y() << ")" << std::endl;
+          HNOA_L3_LOG << "点 " << i << ": (" << point.x() << ", " << point.y() << ")" << std::endl;
         }
       }
 #endif
@@ -5112,28 +5098,28 @@ void SdNavigationHighway::Erase_Harborlane_Ids(const HarborStopInfo             
   std::vector<uint64_t> tunnel_indices_id_to_remove = {};
   // bool                  is_remove            = false;
   size_t lane_count             = 0;
-  size_t map_normal_lane_count  = std::count(lanetype_list.begin(), lanetype_list.end(), LaneType::LANE_NORMAL) + std::count(lanetype_list.begin(), lanetype_list.end(), LaneType::LANE_BRT);
+  size_t map_normal_lane_count  = std::count(lanetype_list.begin(), lanetype_list.end(), LaneType::LANE_NORMAL);
   double min_overlap_threshold  = 18.0f;  // 最小重叠长度阈值(米)
   double max_distance_threshold = 3.0f;   // 最大距离阈值(米)
 
   for (auto &id : road_selected_buslane_filtered) {
     auto single_lane = INTERNAL_PARAMS.raw_bev_data.GetLaneInfoById(id);
     if ((single_lane) && (!single_lane->geos->empty())) {
-      SD_COARSE_MATCH_LOG << "single_lane_id: " << single_lane->id << " lane_start_x: " << single_lane->geos->front().x()
-                          << " lane_start_y: " << single_lane->geos->front().y() << " lane_end_x: " << single_lane->geos->back().x()
-                          << " lane_end_y: " << single_lane->geos->back().y();
+      HNOA_L3_LOG << "single_lane_id: " << single_lane->id << " lane_start_x: " << single_lane->geos->front().x()
+                  << " lane_start_y: " << single_lane->geos->front().y() << " lane_end_x: " << single_lane->geos->back().x()
+                  << " lane_end_y: " << single_lane->geos->back().y();
 
       //通过switch  判断所有SplitTopoExtendType，并打印日志
-      SD_COARSE_MATCH_LOG << StrSplitTopologyExtendType(single_lane->split_topo_extend);
-      SD_COARSE_MATCH_LOG << StrMergeTopologyExtendType(single_lane->merge_topo_extend);
+      HNOA_L3_LOG << StrSplitTopologyExtendType(single_lane->split_topo_extend);
+      HNOA_L3_LOG << StrMergeTopologyExtendType(single_lane->merge_topo_extend);
 
       double overlap_dis = calculateOverlapDistance(sd_harbor_stop_info_, *single_lane->geos);
-      SD_COARSE_MATCH_LOG << "overlap_dis:" << overlap_dis;
+      HNOA_L3_LOG << "overlap_dis:" << overlap_dis;
       if ((overlap_dis > min_overlap_threshold)) {
         lane_count++;
         if ((sd_harbor_stop_info_.is_right_most) && (id == road_selected_buslane_filtered.back()) &&
             (single_lane->split_topo_extend == SplitTopoExtendType::TOPOLOGY_SPLIT_RIGHT)) {
-          SD_COARSE_MATCH_LOG << "harbor single_lane id is  :" << single_lane->id;
+          HNOA_L3_LOG << "harbor single_lane id is  :" << single_lane->id;
           indices_id_to_remove.push_back(single_lane->id);
         } else if ((sd_harbor_stop_info_.is_right_most) && (id == road_selected_buslane_filtered.back()) &&
                    (!single_lane->previous_lane_ids.empty())) {
@@ -5142,7 +5128,7 @@ void SdNavigationHighway::Erase_Harborlane_Ids(const HarborStopInfo             
             auto segment_lane = INTERNAL_PARAMS.raw_bev_data.GetLaneInfoById(segment_lane_id);
             if (segment_lane && segment_lane->split_topo_extend == SplitTopoExtendType::TOPOLOGY_SPLIT_RIGHT) {
               indices_id_to_remove.push_back(single_lane->id);
-              SD_COARSE_MATCH_LOG << "harbor single_lane (by pre) id is  :" << single_lane->id;
+              HNOA_L3_LOG << "harbor single_lane (by pre) id is  :" << single_lane->id;
             }
           }
 
@@ -5165,7 +5151,7 @@ void SdNavigationHighway::Erase_Harborlane_Ids(const HarborStopInfo             
           ((edge.road_edeg_pos == BevRoadEdgePosition::BEV_REP__RIGHT) ||
            ((edge.road_edeg_pos == BevRoadEdgePosition::BEV_REP__UNKNOWN) && (!edge.geos->empty()) && (edge.geos->front().y() < 0)))) {
         double overlap_dis = calculateOverlapDistance(sd_harbor_stop_info_, *edge.geos);
-        SD_COARSE_MATCH_LOG << "[Erase_Harborlane_Ids] bdry_2_harbor overlap_dis:" << overlap_dis;
+        HNOA_L3_LOG << "[Erase_Harborlane_Ids] bdry_2_harbor overlap_dis:" << overlap_dis;
         if (overlap_dis > max_overlap && overlap_dis >= min_overlap_threshold) {
           max_overlap = overlap_dis;
           best_edge   = edge;
@@ -5174,7 +5160,7 @@ void SdNavigationHighway::Erase_Harborlane_Ids(const HarborStopInfo             
                                                        ((edge.road_edeg_pos == BevRoadEdgePosition::BEV_REP__UNKNOWN) &&
                                                         (!edge.geos->empty()) && (edge.geos->front().y() > 0)))) {
         double overlap_dis = calculateOverlapDistance(sd_harbor_stop_info_, *edge.geos);
-        SD_COARSE_MATCH_LOG << "[Erase_Harborlane_Ids] bdry_2_harbor overlap_dis:" << overlap_dis;
+        HNOA_L3_LOG << "[Erase_Harborlane_Ids] bdry_2_harbor overlap_dis:" << overlap_dis;
         if (overlap_dis > max_overlap && overlap_dis >= min_overlap_threshold) {
           max_overlap = overlap_dis;
           best_edge   = edge;
@@ -5193,16 +5179,16 @@ void SdNavigationHighway::Erase_Harborlane_Ids(const HarborStopInfo             
         /* 重叠区域内计算车道垂线宽度均值，去除头尾值 */
         double dis_to_rightbdry = CalculateCurvedLaneWidth2(*single_lane->geos, *best_edge.geos);
         // double overlap_dis      = calculateOverlapDistance(sd_harbor_stop_info_, *single_lane->geos);
-        SD_COARSE_MATCH_LOG << "[Erase_Harborlane_Ids] dis line " << single_lane->id << " to " << best_edge.id
-                            << "  rightbdry is : " << dis_to_rightbdry;
+        HNOA_L3_LOG << "[Erase_Harborlane_Ids] dis line " << single_lane->id << " to " << best_edge.id
+                    << "  rightbdry is : " << dis_to_rightbdry;
         if (dis_to_rightbdry < min_distance && dis_to_rightbdry <= max_distance_threshold && overlap_dis >= min_overlap_threshold) {
           min_distance = dis_to_rightbdry;
           best_lane_id = id;
         }
       }
     }
-    SD_COARSE_MATCH_LOG << "[Erase_Harborlane_Ids]best_edge id: " << best_edge.id << "  max_overlap: " << max_overlap;
-    SD_COARSE_MATCH_LOG << "[Erase_Harborlane_Ids]best_lane_id: " << best_lane_id << "  min_distance: " << min_distance;
+    HNOA_L3_LOG << "[Erase_Harborlane_Ids]best_edge id: " << best_edge.id << "  max_overlap: " << max_overlap;
+    HNOA_L3_LOG << "[Erase_Harborlane_Ids]best_lane_id: " << best_lane_id << "  min_distance: " << min_distance;
     if (best_lane_id != 0) {
       indices_id_to_remove.push_back(best_lane_id);
     }
@@ -5210,7 +5196,7 @@ void SdNavigationHighway::Erase_Harborlane_Ids(const HarborStopInfo             
 
   // 使用remove-erase移除指定ID的元素
   bool b_in_tunnel = EgoIsInTunnel();
-  SD_COARSE_MATCH_LOG << "[Erase_Harborlane_Ids]  EgoIsInTunnel: " << b_in_tunnel;
+  HNOA_L3_LOG << "[Erase_Harborlane_Ids]  EgoIsInTunnel: " << b_in_tunnel;
   if (sd_harbor_stop_info_.exists && !b_in_tunnel) {
     // 获取第一个港湾车道范围 [start_s, end_s]
     const auto &firstRange           = sd_harbor_stop_info_.ranges[0];
@@ -5220,16 +5206,15 @@ void SdNavigationHighway::Erase_Harborlane_Ids(const HarborStopInfo             
     bool        is_only_harbor_scene = OnlyHarborSceneCheck(sd_harbor_stop_info_, g_emergency_lane_info_);
     bool        filter_enable = !(is_only_harbor_scene && right_bev_emergency_laneid); /* 单harbor场景且存在应急车道，则不过滤，反之需要过滤 */
 
-    SD_COARSE_MATCH_LOG << "harborStart:" << harborStart << ", harborEnd:" << harborEnd << "remove_enable: " << remove_enable;
-    SD_COARSE_MATCH_LOG << "[Erase_Harborlane_Ids]indices_id_to_remove: " << fmt::format(" [{}]  ", fmt::join(indices_id_to_remove, ", "));
+    HNOA_L3_LOG << "harborStart:" << harborStart << ", harborEnd:" << harborEnd << "remove_enable: " << remove_enable;
+    HNOA_L3_LOG << "[Erase_Harborlane_Ids]indices_id_to_remove: " << fmt::format(" [{}]  ", fmt::join(indices_id_to_remove, ", "));
     if ((harborStart < 100.0) && (harborEnd > -10.0) && (lane_count > 2) && (lane_count > map_normal_lane_count) &&
         (map_normal_lane_count > 0) && remove_enable && filter_enable) {
 
       if (!indices_id_to_remove.empty()) {
         for (int id : indices_id_to_remove) {
           auto single_lane = INTERNAL_PARAMS.raw_bev_data.GetLaneInfoById(id);
-          SD_COARSE_MATCH_LOG << "[Erase_Harborlane_Ids]single_lane: " << single_lane->id
-                              << "single_lane->position: " << single_lane->position;
+          HNOA_L3_LOG << "[Erase_Harborlane_Ids]single_lane: " << single_lane->id << "single_lane->position: " << single_lane->position;
           if ((single_lane) && (single_lane->position != (int)BevLanePosition::LANE_LOC_EGO)) {
             road_selected_buslane_filtered.erase(
                 std::remove(road_selected_buslane_filtered.begin(), road_selected_buslane_filtered.end(), id),
@@ -5240,11 +5225,11 @@ void SdNavigationHighway::Erase_Harborlane_Ids(const HarborStopInfo             
       else if ((lane_count > lanetype_list.size()) && ((harborStart < 80.0) && (harborStart > 0.0)) &&
                (sd_harbor_stop_info_.is_right_most)) {
         road_selected_buslane_filtered.pop_back();
-        SD_COARSE_MATCH_LOG << "[Erase_Harborlane_Ids]  pop_back in front ";
+        HNOA_L3_LOG << "[Erase_Harborlane_Ids]  pop_back in front ";
       } else if ((lane_count >= lanetype_list.size()) && ((harborStart < 0.0) && (harborEnd > 0.0)) &&
                  (sd_harbor_stop_info_.is_right_most)) {
         road_selected_buslane_filtered.pop_back();
-        SD_COARSE_MATCH_LOG << "[Erase_Harborlane_Ids] pop_back between";
+        HNOA_L3_LOG << "[Erase_Harborlane_Ids] pop_back between";
       }
     } else {
     }
@@ -5263,7 +5248,7 @@ void SdNavigationHighway::Erase_Harborlane_Ids(const HarborStopInfo             
 
           if ((single_lane->split_topo_extend == cem::message::sensor::SplitTopoExtendType::TOPOLOGY_SPLIT_RIGHT) ||
               (single_lane->merge_topo_extend == cem::message::sensor::MergeTopoExtendType::TOPOLOGY_MERGE_LEFT)) {
-            SD_COARSE_MATCH_LOG << "tunnel harbor single_lane id is  :" << single_lane->id;
+            HNOA_L3_LOG << "tunnel harbor single_lane id is  :" << single_lane->id;
             tunnel_indices_id_to_remove.push_back(single_lane->id);
           } else {
           }
@@ -5280,23 +5265,23 @@ void SdNavigationHighway::Erase_Harborlane_Ids(const HarborStopInfo             
         }
       } else if ((harborStart < 150.0) && (harborEnd > -100.0) && (road_selected_buslane_filtered.size() > 2) && (right_most_lane) &&
                  (right_most_lane->position != (int)BevLanePosition::LANE_LOC_EGO)) {
-        SD_COARSE_MATCH_LOG << "harborStart:" << harborStart << ", harborEnd:" << harborEnd;
+        HNOA_L3_LOG << "harborStart:" << harborStart << ", harborEnd:" << harborEnd;
         /* 隧道内的港湾车道，利用车道数来判断 */
-        SD_COARSE_MATCH_LOG << "[Erase_Harborlane_Ids] handle harbor in tunnel... ";
+        HNOA_L3_LOG << "[Erase_Harborlane_Ids] handle harbor in tunnel... ";
         double lane_length   = right_most_lane->geos->back().x() - right_most_lane->geos->front().x();
         double harbor_length = harborEnd - harborStart;
         if ((lane_count > lanetype_list.size() || road_selected_buslane_filtered.size() > map_normal_lane_count) &&
             ((harborStart < 150.0) && (harborStart > 0.0)) && (lane_length < harbor_length + 50)) {
           road_selected_buslane_filtered.pop_back();
-          SD_COARSE_MATCH_LOG << "[Erase_Harborlane_Ids]  pop_back in front ";
+          HNOA_L3_LOG << "[Erase_Harborlane_Ids]  pop_back in front ";
         } else if ((lane_count >= lanetype_list.size() || road_selected_buslane_filtered.size() > map_normal_lane_count) &&
                    ((harborStart < 0.0) && (harborEnd > 0.0)) && (lane_length < harbor_length + 50)) {
           road_selected_buslane_filtered.pop_back();
-          SD_COARSE_MATCH_LOG << "[Erase_Harborlane_Ids] pop_back between";
+          HNOA_L3_LOG << "[Erase_Harborlane_Ids] pop_back between";
         } else if ((lane_count > lanetype_list.size() || road_selected_buslane_filtered.size() > map_normal_lane_count) &&
                    ((harborEnd < 0.0) && (harborEnd > -100.0)) && (lane_length < harbor_length + 50)) {
           road_selected_buslane_filtered.pop_back();
-          SD_COARSE_MATCH_LOG << "[Erase_Harborlane_Ids] pop_back behind";
+          HNOA_L3_LOG << "[Erase_Harborlane_Ids] pop_back behind";
         }
 
       } else {
@@ -5309,7 +5294,7 @@ void SdNavigationHighway::Erase_Harborlane_Ids(const HarborStopInfo             
 
           if ((single_lane->split_topo_extend == cem::message::sensor::SplitTopoExtendType::TOPOLOGY_SPLIT_LEFT) ||
               (single_lane->merge_topo_extend == cem::message::sensor::MergeTopoExtendType::TOPOLOGY_MERGE_RIGHT)) {
-            SD_COARSE_MATCH_LOG << "tunnel harbor single_lane id is  :" << single_lane->id;
+            HNOA_L3_LOG << "tunnel harbor single_lane id is  :" << single_lane->id;
             tunnel_indices_id_to_remove.push_back(single_lane->id);
           } else {
           }
@@ -5326,23 +5311,23 @@ void SdNavigationHighway::Erase_Harborlane_Ids(const HarborStopInfo             
         }
       } else if ((harborStart < 150.0) && (harborEnd > -100.0) && (road_selected_buslane_filtered.size() > 2) && (left_most_lane) &&
                  (left_most_lane->position != (int)BevLanePosition::LANE_LOC_EGO)) {
-        SD_COARSE_MATCH_LOG << "harborStart:" << harborStart << ", harborEnd:" << harborEnd;
+        HNOA_L3_LOG << "harborStart:" << harborStart << ", harborEnd:" << harborEnd;
         /* 隧道内的港湾车道，利用车道数来判断 */
         double lane_length   = left_most_lane->geos->back().x() - left_most_lane->geos->front().x();
         double harbor_length = harborEnd - harborStart;
-        SD_COARSE_MATCH_LOG << "[Erase_Harborlane_Ids] handle harbor in tunnel... ";
+        HNOA_L3_LOG << "[Erase_Harborlane_Ids] handle harbor in tunnel... ";
         if ((lane_count > lanetype_list.size() || road_selected_buslane_filtered.size() > map_normal_lane_count) &&
             ((harborStart < 150.0) && (harborStart > 0.0)) && (lane_length < harbor_length + 50)) {
           road_selected_buslane_filtered.erase(road_selected_buslane_filtered.begin());
-          SD_COARSE_MATCH_LOG << "[Erase_Harborlane_Ids]  erase_begin in front ";
+          HNOA_L3_LOG << "[Erase_Harborlane_Ids]  erase_begin in front ";
         } else if ((lane_count >= lanetype_list.size() || road_selected_buslane_filtered.size() > map_normal_lane_count) &&
                    ((harborStart < 0.0) && (harborEnd > 0.0)) && (lane_length < harbor_length + 50)) {
           road_selected_buslane_filtered.erase(road_selected_buslane_filtered.begin());
-          SD_COARSE_MATCH_LOG << "[Erase_Harborlane_Ids] erase_begin between";
+          HNOA_L3_LOG << "[Erase_Harborlane_Ids] erase_begin between";
         } else if ((lane_count > lanetype_list.size() || road_selected_buslane_filtered.size() > map_normal_lane_count) &&
                    ((harborEnd < 0.0) && (harborEnd > -100.0)) && (lane_length < harbor_length + 50)) {
           road_selected_buslane_filtered.erase(road_selected_buslane_filtered.begin());
-          SD_COARSE_MATCH_LOG << "[Erase_Harborlane_Ids] erase_begin behind";
+          HNOA_L3_LOG << "[Erase_Harborlane_Ids] erase_begin behind";
         }
 
       } else {
@@ -5358,7 +5343,7 @@ void SdNavigationHighway::Erase_Harborlane_Ids(const HarborStopInfo             
         break;
       }
     }
-    SD_COARSE_MATCH_LOG << "[Erase_Harborlane_Ids] has_junction_distant in 300m : " << has_junction_distant;
+    HNOA_L3_LOG << "[Erase_Harborlane_Ids] has_junction_distant in 300m : " << has_junction_distant;
     if (!has_junction_distant) {
       /* 判断临停 */
       for (auto &id : road_selected_buslane_filtered) {
@@ -5369,7 +5354,7 @@ void SdNavigationHighway::Erase_Harborlane_Ids(const HarborStopInfo             
               (single_lane->merge_topo_extend == cem::message::sensor::MergeTopoExtendType::TOPOLOGY_MERGE_LEFT) ||
               (single_lane->split_topo_extend == cem::message::sensor::SplitTopoExtendType::TOPOLOGY_SPLIT_LEFT) ||
               (single_lane->merge_topo_extend == cem::message::sensor::MergeTopoExtendType::TOPOLOGY_MERGE_RIGHT)) {
-            SD_COARSE_MATCH_LOG << "tunnel harbor single_lane id is  :" << single_lane->id;
+            HNOA_L3_LOG << "tunnel harbor single_lane id is  :" << single_lane->id;
             tunnel_indices_id_to_remove.push_back(single_lane->id);
           } else {
           }
@@ -5383,10 +5368,10 @@ void SdNavigationHighway::Erase_Harborlane_Ids(const HarborStopInfo             
         }
       } else if (road_selected_buslane_filtered.size() > 2) {
         /* 隧道内的港湾车道，利用车道数来判断 */
-        SD_COARSE_MATCH_LOG << "[Erase_Harborlane_Ids] handle harbor in tunnel,but no map harbor... ";
+        HNOA_L3_LOG << "[Erase_Harborlane_Ids] handle harbor in tunnel,but no map harbor... ";
         if ((lane_count > lanetype_list.size() || road_selected_buslane_filtered.size() > lanetype_list.size())) {
           road_selected_buslane_filtered.pop_back();
-          SD_COARSE_MATCH_LOG << "[Erase_Harborlane_Ids] default right harbor pop_back  ";
+          HNOA_L3_LOG << "[Erase_Harborlane_Ids] default right harbor pop_back  ";
         }
 
       } else {
@@ -5395,21 +5380,20 @@ void SdNavigationHighway::Erase_Harborlane_Ids(const HarborStopInfo             
   } else {
   }
 
-  SD_COARSE_MATCH_LOG << "[Erase_Harborlane_Ids]Current bevlane num  :" << lane_count
-                      << " Current maplane num(normal): " << map_normal_lane_count;
-  SD_COARSE_MATCH_LOG << "[Erase_Harborlane_Ids]indices_id_to_remove: " << fmt::format(" [{}]  ", fmt::join(indices_id_to_remove, ", "));
-  SD_COARSE_MATCH_LOG << "[Erase_Harborlane_Ids]tunnel_indices_id_to_remove: "
-                      << fmt::format(" [{}]  ", fmt::join(tunnel_indices_id_to_remove, ", "));
-  SD_COARSE_MATCH_LOG << "[Erase_Harborlane_Ids]road_selected_buslane_filtered: "
-                      << fmt::format(" [{}]  ", fmt::join(road_selected_buslane_filtered, ", "))
-                      << " size: " << road_selected_buslane_filtered.size();
+  HNOA_L3_LOG << "[Erase_Harborlane_Ids]Current bevlane num  :" << lane_count << " Current maplane num(normal): " << map_normal_lane_count;
+  HNOA_L3_LOG << "[Erase_Harborlane_Ids]indices_id_to_remove: " << fmt::format(" [{}]  ", fmt::join(indices_id_to_remove, ", "));
+  HNOA_L3_LOG << "[Erase_Harborlane_Ids]tunnel_indices_id_to_remove: "
+              << fmt::format(" [{}]  ", fmt::join(tunnel_indices_id_to_remove, ", "));
+  HNOA_L3_LOG << "[Erase_Harborlane_Ids]road_selected_buslane_filtered: "
+              << fmt::format(" [{}]  ", fmt::join(road_selected_buslane_filtered, ", "))
+              << " size: " << road_selected_buslane_filtered.size();
 }
 /*
   * @brief 根据港湾车道信息和车道线，判断是否存在重叠
   * @return 重叠距离
 */
 double SdNavigationHighway::calculateOverlapDistance(const HarborStopInfo &harbor, const std::vector<Eigen::Vector2f> geos) {
-  SD_COARSE_MATCH_LOG << "[calculateOverlapDistance Entering...]";
+  HNOA_L3_LOG << "[calculateOverlapDistance Entering...]";
   // 检查港湾车道是否存在且有范围
   if (!harbor.exists || harbor.ranges.empty()) {
     return 0.0;
@@ -5443,8 +5427,8 @@ double SdNavigationHighway::calculateOverlapDistance(const HarborStopInfo &harbo
   // 计算重叠部分
   double overlapStart = std::max(laneStart, harborStart);
   double overlapEnd   = std::min(laneEnd, harborEnd);
-  SD_COARSE_MATCH_LOG << "[calculateOverlapDistance Exiting...]"
-                      << " overlapStart: " << overlapStart << " overlapEnd: " << overlapEnd;
+  HNOA_L3_LOG << "[calculateOverlapDistance Exiting...]"
+              << " overlapStart: " << overlapStart << " overlapEnd: " << overlapEnd;
   // 如果存在重叠，返回重叠距离
   return (overlapStart < overlapEnd) ? (overlapEnd - overlapStart) : 0.0;
 }
@@ -5461,19 +5445,19 @@ void SdNavigationHighway::Erase_Buslane_Ids(std::vector<LaneType> &lanetype_list
     if (lanetype_list.size() <= 3) {
       if (lanetype_list[idx] == cem::message::env_model::LaneType::LANE_HARBOR_STOP) {
         indices_to_remove.push_back(idx);
-        SD_COARSE_MATCH_LOG << "[Erase_Buslane_Ids]map idx: " << idx << " is harbor lane";
+        HNOA_L3_LOG << "[Erase_Buslane_Ids]map idx: " << idx << " is harbor lane";
       }
     } else {
 
       if ((lanetype_list[idx] == cem::message::env_model::LaneType::LANE_BUS_NORMAL)) {
         indices_to_remove.push_back(idx);
-        SD_COARSE_MATCH_LOG << "[Erase_Buslane_Ids]map idx: " << idx << " is  bus lane";
+        HNOA_L3_LOG << "[Erase_Buslane_Ids]map idx: " << idx << " is  bus lane";
       }
     }
   }
   // 确保两个vector数量相等
   if (lanetype_list.size() == road_selected.size()) {
-    SD_COARSE_MATCH_LOG << "[Erase_Buslane_Ids]lanetype_list.size() == road_selected.size(): " << lanetype_list.size();
+    HNOA_L3_LOG << "[Erase_Buslane_Ids]lanetype_list.size() == road_selected.size(): " << lanetype_list.size();
     // 从后向前删除road_selected中对应索引的元素
     for (auto it = indices_to_remove.rbegin(); it != indices_to_remove.rend(); ++it) {
       if (*it < road_selected.size()) {
@@ -5481,7 +5465,7 @@ void SdNavigationHighway::Erase_Buslane_Ids(std::vector<LaneType> &lanetype_list
       }
     }
   } else if (lanetype_list.size() > road_selected.size()) {
-    SD_COARSE_MATCH_LOG << "[Erase_Buslane_Ids]lanetype_list.size() > road_selected.size(): " << lanetype_list.size();
+    HNOA_L3_LOG << "[Erase_Buslane_Ids]lanetype_list.size() > road_selected.size(): " << lanetype_list.size();
     // 使用反向迭代器
     for (auto it = indices_to_remove.rbegin(); it != indices_to_remove.rend(); ++it) {
       if (*it < road_selected.size()) {
@@ -5505,23 +5489,23 @@ std::vector<LaneType> SdNavigationHighway::GetCurLaneTypeList(const std::shared_
                                                               SDLaneNumInfo                     &lane_num_info) {
   //定义输出为默认值
   std::vector<LaneType> lane_type_list = {};
-  SD_COARSE_MATCH_LOG << "Entering GetCurLaneTypeList";
+  HNOA_L3_LOG << "Entering GetCurLaneTypeList";
   auto sd_route = INTERNAL_PARAMS.sd_map_data.GetSDRouteInfoPtr();
   if (!sd_route) {
     AWARN << "[GetCurLaneTypeList] sd_route is null";
-    SD_COARSE_MATCH_LOG << "sd_route is null";
+    HNOA_L3_LOG << "sd_route is null";
     return {};
   }
 
   const auto &mpp_sections = sd_route->mpp_sections;
   if (mpp_sections.empty()) {
     AWARN << "[GetCurLaneTypeList] mpp_sections is empty";
-    SD_COARSE_MATCH_LOG << "mpp_sections is empty";
+    HNOA_L3_LOG << "mpp_sections is empty";
     return {};
   }
 
   uint64_t current_section_id = sd_route->navi_start.section_id;
-  SD_COARSE_MATCH_LOG << "current_section_id: " << current_section_id;
+  HNOA_L3_LOG << "current_section_id: " << current_section_id;
 
   const SDSectionInfo *current_section = nullptr;
   for (const auto &section : mpp_sections) {
@@ -5532,12 +5516,12 @@ std::vector<LaneType> SdNavigationHighway::GetCurLaneTypeList(const std::shared_
   }
   if (!current_section) {
     AWARN << "[GetCurLaneTypeList] current section not found";
-    SD_COARSE_MATCH_LOG << "current section not found";
+    HNOA_L3_LOG << "current section not found";
     return {};
   }
 
   double current_s_offset = sd_route->navi_start.s_offset;
-  SD_COARSE_MATCH_LOG << "current_s_offset: " << current_s_offset;
+  HNOA_L3_LOG << "current_s_offset: " << current_s_offset;
   /*获取当前group idx*/
   const SDLaneGroupIndex *current_lane_group_idx = nullptr;
   const SDLaneGroupIndex *next_lane_group_idx    = nullptr;
@@ -5566,19 +5550,19 @@ std::vector<LaneType> SdNavigationHighway::GetCurLaneTypeList(const std::shared_
 
   if (!current_lane_group_idx) {
     AWARN << "[GetCurLaneTypeList] current lane group not found";
-    SD_COARSE_MATCH_LOG << "current lane group not found";
+    HNOA_L3_LOG << "current lane group not found";
     return {};
   } else {
-    SD_COARSE_MATCH_LOG << "end_range_offset: " << current_lane_group_idx->end_range_offset;
-    SD_COARSE_MATCH_LOG << "left_offset: " << current_lane_group_idx->end_range_offset - current_s_offset;
+    HNOA_L3_LOG << "end_range_offset: " << current_lane_group_idx->end_range_offset;
+    HNOA_L3_LOG << "left_offset: " << current_lane_group_idx->end_range_offset - current_s_offset;
   }
 
   const auto *lane_group = INTERNAL_PARAMS.sd_map_data.GetSDLaneGroupInfoById(current_lane_group_idx->id);
-  SD_COARSE_MATCH_LOG << "current lane group id: " << current_lane_group_idx->id;
+  HNOA_L3_LOG << "current lane group id: " << current_lane_group_idx->id;
 
   if (!lane_group) {
     AWARN << "[GetCurLaneTypeList] lane group not found";
-    SD_COARSE_MATCH_LOG << "lane group not found";
+    HNOA_L3_LOG << "lane group not found";
     return {};
   }
   size_t lane_num         = static_cast<size_t>(lane_group->lane_num);
@@ -5591,36 +5575,36 @@ std::vector<LaneType> SdNavigationHighway::GetCurLaneTypeList(const std::shared_
       //通过switch  判断所有LaneType，并打印日志
       switch (lane.type) {
         case cem::message::env_model::LaneType::LANE_NON_MOTOR:
-          SD_COARSE_MATCH_LOG << "LaneType::LANE_NON_MOTOR";
+          HNOA_L3_LOG << "LaneType::LANE_NON_MOTOR";
           break;
         case cem::message::env_model::LaneType::LANE_NORMAL:
-          SD_COARSE_MATCH_LOG << "LaneType::LANE_NORMAL";
+          HNOA_L3_LOG << "LaneType::LANE_NORMAL";
           break;
         case cem::message::env_model::LaneType::LANE_BUS_NORMAL:
-          SD_COARSE_MATCH_LOG << "LaneType::LANE_BUS_NORMAL";
+          HNOA_L3_LOG << "LaneType::LANE_BUS_NORMAL";
           break;
         case cem::message::env_model::LaneType::LANE_HARBOR_STOP:
-          SD_COARSE_MATCH_LOG << "LaneType::LANE_HARBOR_STOP";
+          HNOA_L3_LOG << "LaneType::LANE_HARBOR_STOP";
           break;
         case cem::message::env_model::LaneType::LANE_UNKNOWN:
-          SD_COARSE_MATCH_LOG << "LaneType::LANE_UNKNOWN";
+          HNOA_L3_LOG << "LaneType::LANE_UNKNOWN";
           break;
         case cem::message::env_model::LaneType::LANE_EMERGENCY:
-          SD_COARSE_MATCH_LOG << "LaneType::LANE_EMERGENCY";
+          HNOA_L3_LOG << "LaneType::LANE_EMERGENCY";
           break;
         default:
-          SD_COARSE_MATCH_LOG << "LaneType::LANE_OTHER_ELSE: "<< StrLaneType(lane.type);
+          HNOA_L3_LOG << "LaneType::LANE_OTHER_ELSE: "<< StrLaneType(lane.type);
       }
     }
   }
   /*判断车道数与车道类型的数量，两者相等或车道数比车道类型数量多1，则打印日志并且返回车道类型列表*/
   if (lane_num == lane_type_list.size() || lane_num == lane_type_list.size() + 1) {
-    SD_COARSE_MATCH_LOG << "lane_num: " << lane_num << " lane_type_list.size(): " << lane_type_list.size();
+    HNOA_L3_LOG << "lane_num: " << lane_num << " lane_type_list.size(): " << lane_type_list.size();
   } else {
-    SD_COARSE_MATCH_LOG << "lane_num: " << lane_num << " lane_type_list.size(): " << lane_type_list.size() << " (Mismatch detected)";
+    HNOA_L3_LOG << "lane_num: " << lane_num << " lane_type_list.size(): " << lane_type_list.size() << " (Mismatch detected)";
   }
 
-  SD_COARSE_MATCH_LOG << "Exiting GetCurLaneTypeList";
+  HNOA_L3_LOG << "Exiting GetCurLaneTypeList";
   return lane_type_list;
 }
 #endif
@@ -5628,23 +5612,23 @@ std::vector<LaneType> SdNavigationHighway::GetCurLaneTypeList(const std::shared_
                                                               SDLaneNumInfo                     &lane_num_info) {
   //定义输出为默认值
   std::vector<LaneType> lane_type_list = {};
-  SD_COARSE_MATCH_LOG << "Entering GetCurLaneTypeList with LD...";
+  HNOA_L3_LOG << "Entering GetCurLaneTypeList with LD...";
   auto ld_route_info = INTERNAL_PARAMS.ld_map_data.GetLDRouteInfoPtr();
   if (!ld_route_info) {
     AWARN << "[GetCurLaneTypeList] ld_route_info is null";
-    SD_COARSE_MATCH_LOG << "ld_route_info is null";
+    HNOA_L3_LOG << "ld_route_info is null";
     return {};
   }
 
   const auto &mpp_sections = ld_route_info->sections;
   if (mpp_sections.empty()) {
     AWARN << "[GetCurLaneTypeList] mpp_sections is empty";
-    SD_COARSE_MATCH_LOG << "mpp_sections is empty";
+    HNOA_L3_LOG << "mpp_sections is empty";
     return {};
   }
 
   uint64_t current_section_id = ld_route_info->navi_start.section_id;
-  SD_COARSE_MATCH_LOG << "current_section_id: " << current_section_id;
+  HNOA_L3_LOG << "current_section_id: " << current_section_id;
 
   const SectionInfo *current_section = nullptr;
   for (const auto &section : mpp_sections) {
@@ -5655,17 +5639,17 @@ std::vector<LaneType> SdNavigationHighway::GetCurLaneTypeList(const std::shared_
   }
   if (!current_section) {
     AWARN << "[GetCurLaneTypeList] current section not found";
-    SD_COARSE_MATCH_LOG << "current section not found";
+    HNOA_L3_LOG << "current section not found";
     return {};
   }
 
   double current_s_offset = ld_route_info->navi_start.s_offset;
-  SD_COARSE_MATCH_LOG << "current_s_offset: " << current_s_offset;
+  HNOA_L3_LOG << "current_s_offset: " << current_s_offset;
   // 获取当前section的车道ID列表
   const auto &lane_ids = current_section->lane_ids;
   if (lane_ids.empty()) {
     AWARN << "[GetCurLaneTypeList] no lanes in current section";
-    SD_COARSE_MATCH_LOG << "no lanes in current section";
+    HNOA_L3_LOG << "no lanes in current section";
     return {};
   }
 
@@ -5679,7 +5663,7 @@ std::vector<LaneType> SdNavigationHighway::GetCurLaneTypeList(const std::shared_
     ConstLaneInfo lane = INTERNAL_PARAMS.ld_map_data.GetLDLaneInfoById(lane_id);
     if (!lane) {
       AWARN << "[GetCurLaneTypeList] lane not found: " << lane_id;
-      SD_COARSE_MATCH_LOG << "lane not found: " << lane_id;
+      HNOA_L3_LOG << "lane not found: " << lane_id;
       continue;
     }
 
@@ -5688,20 +5672,20 @@ std::vector<LaneType> SdNavigationHighway::GetCurLaneTypeList(const std::shared_
       /*添加debug信息*/
       navi_debug_infos.lane_type.push_back(StrLaneType(lane->type));
       //通过switch  判断所有LaneType，并打印日志
-      SD_COARSE_MATCH_LOG << "LaneType: " << StrLaneType(lane->type);
+      HNOA_L3_LOG << "LaneType: " << StrLaneType(lane->type);
     } else {
-      SD_COARSE_MATCH_LOG << "Skipped non-motor lane: " << lane_id;
+      HNOA_L3_LOG << "Skipped non-motor lane: " << lane_id;
     }
   }
   /*判断车道数与车道类型的数量，两者相等或车道数比车道类型数量多1，则打印日志并且返回车道类型列表*/
   if (lane_num_info.cur_lane_num == lane_type_list.size() || lane_num_info.cur_lane_num == lane_type_list.size() + 1) {
-    SD_COARSE_MATCH_LOG << "lane_num: " << lane_num_info.cur_lane_num << " lane_type_list.size(): " << lane_type_list.size();
+    HNOA_L3_LOG << "lane_num: " << lane_num_info.cur_lane_num << " lane_type_list.size(): " << lane_type_list.size();
   } else {
-    SD_COARSE_MATCH_LOG << "lane_num: " << lane_num_info.cur_lane_num << " lane_type_list.size(): " << lane_type_list.size()
-                        << " (Mismatch detected)";
+    HNOA_L3_LOG << "lane_num: " << lane_num_info.cur_lane_num << " lane_type_list.size(): " << lane_type_list.size()
+                << " (Mismatch detected)";
   }
 
-  SD_COARSE_MATCH_LOG << "Exiting GetCurLaneTypeList";
+  HNOA_L3_LOG << "Exiting GetCurLaneTypeList";
   return lane_type_list;
 }
 /*
@@ -5715,7 +5699,7 @@ std::vector<uint64_t> SdNavigationHighway::FilterSpecialLane(const std::shared_p
                                                              std::vector<JunctionInfo *> &target_sd_junctions,
                                                              uint64_t &right_bev_emergency_laneid, uint64_t &left_bev_emergency_laneid,
                                                              EmergencyLaneInfo &emergency_lane_info, BevMapInfoPtr &GlobalBevMapOutPut) {
-  SD_COARSE_MATCH_LOG << "[FilterSpecialLane]Entering FilterSpecialLane...";
+  HNOA_L3_LOG << "[FilterSpecialLane]Entering FilterSpecialLane...";
   // 判断road_selected是否为空，空则返回
   if (road_selected.empty()) {
     return road_selected;
@@ -5726,8 +5710,8 @@ std::vector<uint64_t> SdNavigationHighway::FilterSpecialLane(const std::shared_p
     for (auto junction : target_sd_junctions) {
       if (junction->offset < 300 && junction->offset > 0.0 && (junction->junction_type == JunctionType::RampInto)) {
         is_near_exit = true;
-        SD_COARSE_MATCH_LOG << " [FilterSpecialLane] APPROACHING junction RampInto ,offset: " << junction->offset
-                            << StrJunctionType(junction->junction_type);
+        HNOA_L3_LOG << " [FilterSpecialLane] APPROACHING junction RampInto ,offset: " << junction->offset
+                    << StrJunctionType(junction->junction_type);
         break;
       }
     }
@@ -5735,7 +5719,7 @@ std::vector<uint64_t> SdNavigationHighway::FilterSpecialLane(const std::shared_p
   JunctionInfo merge_jct;
   bool         approaching_merge = IsApproachMergeJCT(target_sd_junctions, merge_jct);  //途径汇入口
   bool         ego_merge         = IsRampMergeJCT(target_sd_junctions, merge_jct);      //自车汇入口
-  SD_COARSE_MATCH_LOG << " [FilterSpecialLane] approaching_merge: " << approaching_merge;
+  HNOA_L3_LOG << " [FilterSpecialLane] approaching_merge: " << approaching_merge;
   GetAccLaneInfo(approaching_merge);
 
   std::vector<uint64_t> filtered_lanes_without_emergency = {};
@@ -5750,7 +5734,7 @@ std::vector<uint64_t> SdNavigationHighway::FilterSpecialLane(const std::shared_p
   std::vector<LaneType> lanetype_list = GetCurLaneTypeList(raw_routing_map, lane_num_info);
   bool                  ConstructionZone =
       LeftConstructionZoneCheck(road_selected, all_bev_edges, lanetype_list, right_bev_emergency_laneid, left_bev_emergency_laneid);
-  SD_COARSE_MATCH_LOG << " [FilterSpecialLane] ConstructionZone: " << ConstructionZone;
+  HNOA_L3_LOG << " [FilterSpecialLane] ConstructionZone: " << ConstructionZone;
 
   /* 应急车道的过滤兜底 */
   filtered_lanes_without_emergency = road_selected;  //FilterEmergencyLane(raw_routing_map, road_selected, raw_bev_map);
@@ -5762,10 +5746,10 @@ std::vector<uint64_t> SdNavigationHighway::FilterSpecialLane(const std::shared_p
   /* 加速车道的过滤 */
   if (is_near_exit) {
     filtered_lanes_without_acc = filtered_lanes_without_harbor;
-    SD_COARSE_MATCH_LOG << "[FilterSpecialLane] ignore acc lane cause the rampinto jct in 1200m.";
+    HNOA_L3_LOG << "[FilterSpecialLane] ignore acc lane cause the rampinto jct in 1200m.";
   } else if (approaching_merge || !ego_merge) {
     /* CNOAC2-51557 */
-    SD_COARSE_MATCH_LOG << "[FilterSpecialLane] FilterACCLane...";
+    HNOA_L3_LOG << "[FilterSpecialLane] FilterACCLane...";
     filtered_lanes_without_acc = FilterACCLane(raw_routing_map, filtered_lanes_without_harbor, raw_bev_map, approaching_merge, ego_merge,
                                                acc_lane_id, acc_adj_lane_id);
     /* 无加速车道场景的acc_adj_lane_id的匹配 */
@@ -5776,10 +5760,10 @@ std::vector<uint64_t> SdNavigationHighway::FilterSpecialLane(const std::shared_p
     }
   } else {
     filtered_lanes_without_acc = filtered_lanes_without_harbor;
-    SD_COARSE_MATCH_LOG << "[FilterSpecialLane] other situation maybe ramp merge or main road. acc filter is not valid.";
+    HNOA_L3_LOG << "[FilterSpecialLane] other situation maybe ramp merge or main road. acc filter is not valid.";
   }
 
-  SD_COARSE_MATCH_LOG << "[FilterSpecialLane] acc_lane_id: " << acc_lane_id << ", acc_adj_lane_id: " << acc_adj_lane_id;
+  HNOA_L3_LOG << "[FilterSpecialLane] acc_lane_id: " << acc_lane_id << ", acc_adj_lane_id: " << acc_adj_lane_id;
 
   if (GlobalBevMapOutPut) {
     SetBevAccLane(*GlobalBevMapOutPut, acc_lane_id);
@@ -5798,8 +5782,7 @@ std::vector<uint64_t> SdNavigationHighway::FilterSpecialLane(const std::shared_p
     final_filtered_lanes = final_filtered_without_split;
   }
 
-
-  SD_COARSE_MATCH_LOG << " [FilterSpecialLane]  final_filtered_lanes : " << fmt::format(" [{}]  ", fmt::join(final_filtered_lanes, ", "));
+  HNOA_L3_LOG << " [FilterSpecialLane]  final_filtered_lanes : " << fmt::format(" [{}]  ", fmt::join(final_filtered_lanes, ", "));
 
   return final_filtered_lanes;
 }
@@ -5821,30 +5804,30 @@ std::vector<uint64_t> SdNavigationHighway::FilterBusLane(const std::shared_ptr<R
   /*全局debug*/
   auto                 &navi_debug_infos = INTERNAL_PARAMS.navigation_info_data.navi_debug_infos();
   std::vector<uint64_t> road_selected_buslane_filtered(road_selected);
-  SD_COARSE_MATCH_LOG << "Entering FilterBusLane function with inputs: "
-                      << fmt::format(" [{}]  ", fmt::join(road_selected_buslane_filtered, ", ")) << " size: " << road_selected.size();
+  HNOA_L3_LOG << "Entering FilterBusLane function with inputs: " << fmt::format(" [{}]  ", fmt::join(road_selected_buslane_filtered, ", "))
+              << " size: " << road_selected.size();
   // 获取车道列表
   SDLaneNumInfo         lane_num_info;
   std::vector<LaneType> lane_type_list = GetCurLaneTypeList(raw_routing_map, lane_num_info);
   //lane_type_list判空
   if (lane_type_list.empty()) {
-    SD_COARSE_MATCH_LOG << "FilterBusLane lane_type_list is empty.";
+    HNOA_L3_LOG << "FilterBusLane lane_type_list is empty.";
     navi_debug_infos.sections_without_bus = road_selected_buslane_filtered;
     return road_selected_buslane_filtered;
   }
   /*获取港湾的信息*/
   //GetHarborStopInfo();
   if (sd_harbor_stop_info_.exists) {
-    SD_COARSE_MATCH_LOG << "harbor_stop is exists.";
+    HNOA_L3_LOG << "harbor_stop is exists.";
     for (const auto &range : sd_harbor_stop_info_.ranges) {
-      SD_COARSE_MATCH_LOG << "  [" << range.first << ", " << range.second << "]";
+      HNOA_L3_LOG << "  [" << range.first << ", " << range.second << "]";
     }
     /*检测港湾分叉线，并移除该线*/
     Erase_Harborlane_Ids(sd_harbor_stop_info_, road_selected_buslane_filtered, all_bev_road_edges, lane_type_list,
                          right_bev_emergency_laneid, left_bev_emergency_laneid);
 
   } else {
-    SD_COARSE_MATCH_LOG << "harbor_stop is not found in map,try to detect harbor in tunnel.";
+    HNOA_L3_LOG << "harbor_stop is not found in map,try to detect harbor in tunnel.";
     /*检测港湾分叉线，并移除该线*/
     Erase_Harborlane_Ids(sd_harbor_stop_info_, road_selected_buslane_filtered, all_bev_road_edges, lane_type_list,
                          right_bev_emergency_laneid, left_bev_emergency_laneid);
@@ -5853,8 +5836,8 @@ std::vector<uint64_t> SdNavigationHighway::FilterBusLane(const std::shared_ptr<R
   /*添加debug信息*/
   //navi_debug_infos.sections_without_bus = road_selected_buslane_filtered;
   // 最终结果日志输出
-  SD_COARSE_MATCH_LOG << "FilterBusLane Filtered result: " << fmt::format("[{}]", fmt::join(road_selected_buslane_filtered, ", "));
-  SD_COARSE_MATCH_LOG << "Exiting FilterBusLane function ";
+  HNOA_L3_LOG << "FilterBusLane Filtered result: " << fmt::format("[{}]", fmt::join(road_selected_buslane_filtered, ", "));
+  HNOA_L3_LOG << "Exiting FilterBusLane function ";
   return road_selected_buslane_filtered;
 }
 #if 0
@@ -5863,23 +5846,23 @@ std::vector<uint64_t> SdNavigationHighway::FilterBusLane(const std::shared_ptr<R
   * @return 
 */
 bool SdNavigationHighway::EgoIsInTunnel() {
-  SD_COARSE_MATCH_LOG << "Entering EgoIsInTunnel";
+  HNOA_L3_LOG << "Entering EgoIsInTunnel";
   auto sd_route = INTERNAL_PARAMS.sd_map_data.GetSDRouteInfoPtr();
   if (!sd_route) {
     AWARN << "[EgoIsInTunnel] sd_route is null";
-    SD_COARSE_MATCH_LOG << "sd_route is null";
+    HNOA_L3_LOG << "sd_route is null";
     return false;
   }
 
   const auto &mpp_sections = sd_route->mpp_sections;
   if (mpp_sections.empty()) {
     AWARN << "[EgoIsInTunnel] mpp_sections is empty";
-    SD_COARSE_MATCH_LOG << "mpp_sections is empty";
+    HNOA_L3_LOG << "mpp_sections is empty";
     return false;
   }
 
   uint64_t current_section_id = sd_route->navi_start.section_id;
-  SD_COARSE_MATCH_LOG << "current_section_id: " << current_section_id;
+  HNOA_L3_LOG << "current_section_id: " << current_section_id;
 
   const SDSectionInfo *current_section = nullptr;
   for (const auto &section : mpp_sections) {
@@ -5890,11 +5873,11 @@ bool SdNavigationHighway::EgoIsInTunnel() {
   }
   if (!current_section) {
     AWARN << "[EgoIsInTunnel] current section not found";
-    SD_COARSE_MATCH_LOG << "current section not found";
+    HNOA_L3_LOG << "current section not found";
     return false;
   }
   bool is_tunnel = (current_section->link_type & static_cast<uint32_t>(SDLinkTypeMask::SDLT_TUNNEL)) != 0;
-  SD_COARSE_MATCH_LOG << "[EgoIsInTunnel] link_type: " << StrLinkType(current_section->link_type) << "result: " << is_tunnel;
+  HNOA_L3_LOG << "[EgoIsInTunnel] link_type: " << StrLinkType(current_section->link_type) << "result: " << is_tunnel;
   return is_tunnel;
 }
 #endif
@@ -5903,23 +5886,23 @@ bool SdNavigationHighway::EgoIsInTunnel() {
   * @return
 */
 bool SdNavigationHighway::EgoIsInTunnel() {
-  SD_COARSE_MATCH_LOG << "Entering EgoIsInTunnel with LD";
+  HNOA_L3_LOG << "Entering EgoIsInTunnel with LD";
   auto ld_route_info = INTERNAL_PARAMS.ld_map_data.GetLDRouteInfoPtr();
   if (!ld_route_info) {
     AWARN << "[EgoIsInTunnel LD] ld_route_info is null";
-    SD_COARSE_MATCH_LOG << "ld_route_info is null";
+    HNOA_L3_LOG << "ld_route_info is null";
     return false;
   }
 
   const auto &mpp_sections = ld_route_info->sections;
   if (mpp_sections.empty()) {
     AWARN << "[EgoIsInTunnel LD] mpp_sections is empty";
-    SD_COARSE_MATCH_LOG << "mpp_sections is empty";
+    HNOA_L3_LOG << "mpp_sections is empty";
     return false;
   }
 
   uint64_t current_section_id = ld_route_info->navi_start.section_id;
-  SD_COARSE_MATCH_LOG << "current_section_id: " << current_section_id;
+  HNOA_L3_LOG << "current_section_id: " << current_section_id;
 
   const SectionInfo *current_section = nullptr;
   for (const auto &section : mpp_sections) {
@@ -5930,12 +5913,12 @@ bool SdNavigationHighway::EgoIsInTunnel() {
   }
   if (!current_section) {
     AWARN << "[EgoIsInTunnel LD] current section not found";
-    SD_COARSE_MATCH_LOG << "current section not found";
+    HNOA_L3_LOG << "current section not found";
     return false;
   }
-  SD_COARSE_MATCH_LOG << "current link type: " << current_section->link_type;
+  HNOA_L3_LOG << "current link type: " << current_section->link_type;
   bool is_tunnel = (current_section->link_type & static_cast<uint32_t>(LDLinkTypeMask::LT_TUNNEL)) != 0;
-  SD_COARSE_MATCH_LOG << "[EgoIsInTunnel LD] link_type: " << StrLinkType(current_section->link_type) << "result: " << is_tunnel;
+  HNOA_L3_LOG << "[EgoIsInTunnel LD] link_type: " << StrLinkType(current_section->link_type) << "result: " << is_tunnel;
   return is_tunnel;
 }
 
@@ -5952,7 +5935,7 @@ void SdNavigationHighway::GetAccLaneInfo(bool approaching_merge) {
   uint64_t ego_section_id = ld_route_info->navi_start.section_id;
   double   ego_s_offset   = ld_route_info->navi_start.s_offset;
 
-  SD_COARSE_MATCH_LOG << "[GetAccLaneInfo] GetAccLaneInfo Ego section ID: " << ego_section_id << ", Ego s_offset: " << ego_s_offset;
+  HNOA_L3_LOG << "[GetAccLaneInfo] GetAccLaneInfo Ego section ID: " << ego_section_id << ", Ego s_offset: " << ego_s_offset;
 
   // 查找自车所在路段索引
   int ego_section_index = -1;
@@ -5974,7 +5957,7 @@ void SdNavigationHighway::GetAccLaneInfo(bool approaching_merge) {
   }
   ego_global_s += ego_s_offset;
 
-  SD_COARSE_MATCH_LOG << "[GetAccLaneInfo] GetAccLaneInfo Ego global s: " << ego_global_s;
+  HNOA_L3_LOG << "[GetAccLaneInfo] GetAccLaneInfo Ego global s: " << ego_global_s;
 
   // 定义搜索范围
   double min_s = acc_rear_distance_;   // 后向搜索范围（-100m）
@@ -6007,7 +5990,7 @@ void SdNavigationHighway::GetAccLaneInfo(bool approaching_merge) {
       continue;
     }
 
-    // SD_COARSE_MATCH_LOG << "[GetAccLaneInfo] GetAccLaneInfo Section ID: " << section.id
+    // HNOA_L3_LOG << "[GetAccLaneInfo] GetAccLaneInfo Section ID: " << section.id
     //       << " start from s: " << section_start_s << " to s: " << section_end_s;
 
     // 收集当前section的所有车道,直接处理车道
@@ -6032,20 +6015,20 @@ void SdNavigationHighway::GetAccLaneInfo(bool approaching_merge) {
         }
       }
       ego_section_normal_lane_num = ego_normal_lane_count;
-      SD_COARSE_MATCH_LOG << "[GetAccLaneInfo] Ego section " << ego_section_id << " normal lane count: " << ego_section_normal_lane_num;
+      HNOA_L3_LOG << "[GetAccLaneInfo] Ego section " << ego_section_id << " normal lane count: " << ego_section_normal_lane_num;
     }
-    //  SD_COARSE_MATCH_LOG << "[GetAccLaneInfo] Acceleration: section: "<<section.id<<" lane num:  "<<section_lanes.size();
+    //  HNOA_L3_LOG << "[GetAccLaneInfo] Acceleration: section: "<<section.id<<" lane num:  "<<section_lanes.size();
     // 遍历当前路段的车道组
     for (size_t idx = 0; idx < section_lanes.size(); ++idx) {
       const auto *lane = section_lanes[idx];
-      // SD_COARSE_MATCH_LOG << "LaneType: " << StrLaneType(lane->type);
+      // HNOA_L3_LOG << "LaneType: " << StrLaneType(lane->type);
       // 检测加速车道
       if (lane->type == cem::message::env_model::LaneType::LANE_ACC || lane->type == cem::message::env_model::LaneType::LANE_ENTRY) {
         //  判断 merge_dir
         if (lane->merge_topology == cem::message::env_model::MergeTopology::TOPOLOGY_MERGE_LEFT) {
           sd_acc_lane_info_.merge_dir = AccLaneMergeDir::ACC_MERGE_LEFT;
           double start_s              = std::max(section_start_s - ego_global_s, min_s);
-          SD_COARSE_MATCH_LOG << "[GetAccLaneInfo] Acceleration lane detected, ACC_MERGE_LEFT. id: " << lane->id << " start_s: " << start_s;
+          HNOA_L3_LOG << "[GetAccLaneInfo] Acceleration lane detected, ACC_MERGE_LEFT. id: " << lane->id << " start_s: " << start_s;
         } else if (lane->merge_topology == cem::message::env_model::MergeTopology::TOPOLOGY_MERGE_RIGHT) {
           sd_acc_lane_info_.merge_dir = AccLaneMergeDir::ACC_MERGE_RIGHT;
         } /*else{
@@ -6062,7 +6045,7 @@ void SdNavigationHighway::GetAccLaneInfo(bool approaching_merge) {
           } else {
             acc_lane_ranges.emplace_back(lane_start_s, lane_end_s);
           }
-          SD_COARSE_MATCH_LOG << "[GetAccLaneInfo] Acceleration lane detected, range: [" << lane_start_s << ", " << lane_end_s << "]";
+          HNOA_L3_LOG << "[GetAccLaneInfo] Acceleration lane detected, range: [" << lane_start_s << ", " << lane_end_s << "]";
         }
       }
     }
@@ -6090,19 +6073,19 @@ void SdNavigationHighway::GetAccLaneInfo(bool approaching_merge) {
         }
         if (!found_forward || lane_start_s > target_range.second)
           continue;
-        SD_COARSE_MATCH_LOG << "[GetAccLaneInfo] Target acc lane range: [" << target_range.first << ", " << target_range.second << "] ";
-        SD_COARSE_MATCH_LOG << "[GetAccLaneInfo] approaching_merge  is: " << approaching_merge << " EgoInMainRoad():  " << EgoInMainRoad()
-                            << "found_forward: " << found_forward;
+        HNOA_L3_LOG << "[GetAccLaneInfo] Target acc lane range: [" << target_range.first << ", " << target_range.second << "] ";
+        HNOA_L3_LOG << "[GetAccLaneInfo] approaching_merge  is: " << approaching_merge << " EgoInMainRoad():  " << EgoInMainRoad()
+                    << "found_forward: " << found_forward;
 
         if (approaching_merge && EgoInMainRoad() && found_forward) {
           ego_normal_lane_id_ = FindOriginNormalLaneIdFromAccLane2(lane, ego_section_id, 800);
-          SD_COARSE_MATCH_LOG << "[GetAccLaneInfo] ego_normal_lane_id_  is: " << ego_normal_lane_id_ << " section_lanes idx " << idx;
+          HNOA_L3_LOG << "[GetAccLaneInfo] ego_normal_lane_id_  is: " << ego_normal_lane_id_ << " section_lanes idx " << idx;
         }
         if (ego_normal_lane_id_ != 0) {
           break;
-          SD_COARSE_MATCH_LOG << "[GetAccLaneInfo] Origin normal lane ID from acc lane " << lane->id << " is: " << ego_normal_lane_id_;
+          HNOA_L3_LOG << "[GetAccLaneInfo] Origin normal lane ID from acc lane " << lane->id << " is: " << ego_normal_lane_id_;
         } else {
-          SD_COARSE_MATCH_LOG << "[GetAccLaneInfo] Could not trace back to normal lane in ego section for acc lane " << lane->id;
+          HNOA_L3_LOG << "[GetAccLaneInfo] Could not trace back to normal lane in ego section for acc lane " << lane->id;
         }
       }
     }
@@ -6113,7 +6096,7 @@ void SdNavigationHighway::GetAccLaneInfo(bool approaching_merge) {
     bool   has_acc_lane      = false;
     for (size_t idx = 0; idx < lane_count; ++idx) {
       const auto *lane = section_lanes[idx];
-      //  SD_COARSE_MATCH_LOG << "GetAccLaneInfo LaneType: " << StrLaneType(lane->type);
+      //  HNOA_L3_LOG << "GetAccLaneInfo LaneType: " << StrLaneType(lane->type);
       if (lane->type == cem::message::env_model::LaneType::LANE_ACC || lane->type == cem::message::env_model::LaneType::LANE_ENTRY) {
         if (idx == 0)
           current_leftmost = true;  // 车道组第一个车道是加速车道→最左
@@ -6152,17 +6135,16 @@ void SdNavigationHighway::GetAccLaneInfo(bool approaching_merge) {
   }
 
   if (sd_acc_lane_info_.exists) {
-    SD_COARSE_MATCH_LOG << "[GetAccLaneInfo] Acceleration lane exists in merged ranges:";
+    HNOA_L3_LOG << "[GetAccLaneInfo] Acceleration lane exists in merged ranges:";
     for (const auto &range : sd_acc_lane_info_.ranges) {
-      SD_COARSE_MATCH_LOG << "  [" << range.first << ", " << range.second << "] "
-                          << "  is_left_most: " << sd_acc_lane_info_.is_left_most << "  is_right_most: " << sd_acc_lane_info_.is_right_most
-                          << "  normal_lane_num: " << sd_acc_lane_info_.normal_lane_num
-                          << " merge_start_dis: " << sd_acc_lane_info_.merge_start_dis
-                          << " merge_end_dis: " << sd_acc_lane_info_.merge_end_dis
-                          << " merge_dir: " << static_cast<int>(sd_acc_lane_info_.merge_dir);
+      HNOA_L3_LOG << "  [" << range.first << ", " << range.second << "] "
+                  << "  is_left_most: " << sd_acc_lane_info_.is_left_most << "  is_right_most: " << sd_acc_lane_info_.is_right_most
+                  << "  normal_lane_num: " << sd_acc_lane_info_.normal_lane_num << " merge_start_dis: " << sd_acc_lane_info_.merge_start_dis
+                  << " merge_end_dis: " << sd_acc_lane_info_.merge_end_dis
+                  << " merge_dir: " << static_cast<int>(sd_acc_lane_info_.merge_dir);
     }
   } else {
-    SD_COARSE_MATCH_LOG << "[GetAccLaneInfo] No acceleration lane found.";
+    HNOA_L3_LOG << "[GetAccLaneInfo] No acceleration lane found.";
   }
 }
 
@@ -6178,7 +6160,7 @@ void SdNavigationHighway::GetDecLaneInfo() {
   uint64_t ego_section_id = ld_route_info->navi_start.section_id;
   double   ego_s_offset   = ld_route_info->navi_start.s_offset;
 #ifdef ENABLE_DEBUG_SDNAVIGATION
-  SD_COARSE_MATCH_LOG << "[GetDecLaneInfo]  Ego section ID: " << ego_section_id << ", Ego s_offset: " << ego_s_offset;
+  HNOA_L3_LOG << "[GetDecLaneInfo]  Ego section ID: " << ego_section_id << ", Ego s_offset: " << ego_s_offset;
 #endif
 
   int ego_section_index = -1;
@@ -6226,7 +6208,7 @@ void SdNavigationHighway::GetDecLaneInfo() {
       continue;
     }
 
-    //SD_COARSE_MATCH_LOG << "[GetDecLaneInfo]  Section ID: " << section.id
+    //HNOA_L3_LOG << "[GetDecLaneInfo]  Section ID: " << section.id
     //      << " start from s: " << section_start_s << " to s: " << section_end_s;
     // 收集当前section的所有车道,直接处理车道
     std::vector<const cem::message::env_model::LaneInfo *> section_lanes;
@@ -6256,7 +6238,7 @@ void SdNavigationHighway::GetDecLaneInfo() {
           } else {
             dec_lane_ranges.emplace_back(lane_start_s, lane_end_s);
           }
-          //SD_COARSE_MATCH_LOG << "[GetDecLaneInfo] Acceleration lane detected, range: ["<< lane_start_s << ", " << lane_end_s << "]";
+          //HNOA_L3_LOG << "[GetDecLaneInfo] Acceleration lane detected, range: ["<< lane_start_s << ", " << lane_end_s << "]";
         }
       }
     }
@@ -6267,7 +6249,7 @@ void SdNavigationHighway::GetDecLaneInfo() {
     for (size_t idx = 0; idx < lane_count; ++idx) {
       const auto *lane = section_lanes[idx];
       if (lane->type == cem::message::env_model::LaneType::LANE_DEC) {
-        SD_COARSE_MATCH_LOG << "[GetDecLaneInfo]  Dec lane exists :" << section_lanes.size() << "index: " << idx;
+        HNOA_L3_LOG << "[GetDecLaneInfo]  Dec lane exists :" << section_lanes.size() << "index: " << idx;
         if (idx == 0)
           current_leftmost = true;  // 车道组第一个车道是加速车道→最左
         if (idx == lane_count - 1)
@@ -6288,14 +6270,14 @@ void SdNavigationHighway::GetDecLaneInfo() {
   sd_dec_lane_info_.normal_lane_num = normal_lane_num;
 
   if (sd_dec_lane_info_.exists) {
-    SD_COARSE_MATCH_LOG << "[GetDecLaneInfo]  Dec lane exists in merged ranges:";
+    HNOA_L3_LOG << "[GetDecLaneInfo]  Dec lane exists in merged ranges:";
     for (const auto &range : sd_dec_lane_info_.ranges) {
-      SD_COARSE_MATCH_LOG << "  [" << range.first << ", " << range.second << "] "
-                          << "  is_left_most: " << sd_dec_lane_info_.is_left_most << "  is_right_most: " << sd_dec_lane_info_.is_right_most
-                          << "  normal_lane_num: " << sd_dec_lane_info_.normal_lane_num;
+      HNOA_L3_LOG << "  [" << range.first << ", " << range.second << "] "
+                  << "  is_left_most: " << sd_dec_lane_info_.is_left_most << "  is_right_most: " << sd_dec_lane_info_.is_right_most
+                  << "  normal_lane_num: " << sd_dec_lane_info_.normal_lane_num;
     }
   } else {
-    SD_COARSE_MATCH_LOG << "[GetDecLaneInfo] No deceleration lane found.";
+    HNOA_L3_LOG << "[GetDecLaneInfo] No deceleration lane found.";
   }
 }
 
@@ -6311,12 +6293,12 @@ std::vector<uint64_t> SdNavigationHighway::FilterEmergencyLane(const std::shared
                                                                BevMapInfoConstPtr                &raw_bev_map) {
   // 判断road_selected是否为空，空则返回
   if (road_selected.empty()) {
-    SD_COARSE_MATCH_LOG << "[FilterEmergencyLane]  road_selected is empty! ";
+    HNOA_L3_LOG << "[FilterEmergencyLane]  road_selected is empty! ";
     return road_selected;
   }
   std::vector<uint64_t> road_selected_emlane_filtered(road_selected);
-  SD_COARSE_MATCH_LOG << "Entering FilterEmLane function with inputs: "
-                      << fmt::format(" [{}]  ", fmt::join(road_selected_emlane_filtered, ", ")) << " size: " << road_selected.size();
+  HNOA_L3_LOG << "Entering FilterEmLane function with inputs: " << fmt::format(" [{}]  ", fmt::join(road_selected_emlane_filtered, ", "))
+              << " size: " << road_selected.size();
   // 获取车道列表
 
   size_t lane_count             = 0;
@@ -6333,13 +6315,13 @@ std::vector<uint64_t> SdNavigationHighway::FilterEmergencyLane(const std::shared
     for (auto &id : road_selected_emlane_filtered) {
       auto single_lane = INTERNAL_PARAMS.raw_bev_data.GetLaneInfoById(id);
       if ((single_lane) && (!single_lane->geos->empty())) {
-        SD_COARSE_MATCH_LOG << "single_lane_id: " << single_lane->id << " lane_start_x: " << single_lane->geos->front().x()
-                            << " lane_start_y: " << single_lane->geos->front().y() << " lane_end_x: " << single_lane->geos->back().x()
-                            << " lane_end_y: " << single_lane->geos->back().y();
+        HNOA_L3_LOG << "single_lane_id: " << single_lane->id << " lane_start_x: " << single_lane->geos->front().x()
+                    << " lane_start_y: " << single_lane->geos->front().y() << " lane_end_x: " << single_lane->geos->back().x()
+                    << " lane_end_y: " << single_lane->geos->back().y();
 
         double overlap_dis = calculateOverlapDisinRange(emergency_lane_info.right.ranges[0].first,
                                                         emergency_lane_info.right.ranges[0].second, *single_lane->geos);
-        SD_COARSE_MATCH_LOG << "overlap_dis:" << overlap_dis;
+        HNOA_L3_LOG << "overlap_dis:" << overlap_dis;
         if ((overlap_dis > min_overlap_threshold)) {
           lane_count++;
         }
@@ -6359,26 +6341,25 @@ std::vector<uint64_t> SdNavigationHighway::FilterEmergencyLane(const std::shared
     if ((emergencyStart < 100.0) && (emergencyEnd > 0.0) && (lane_count > 2) && (lane_count > map_normal_lane_count) &&
         (map_lane_count > 0) && (rightmost) && (rightmost->position != (int)BevLanePosition::LANE_LOC_EGO) &&
         (rightmost_overlap_dis < 50)) {
-      SD_COARSE_MATCH_LOG << "emergencyStart:" << emergencyStart << ", emergencyEnd:" << emergencyEnd
-                          << " , rightmost_overlap_dis: " << rightmost_overlap_dis;
+      HNOA_L3_LOG << "emergencyStart:" << emergencyStart << ", emergencyEnd:" << emergencyEnd
+                  << " , rightmost_overlap_dis: " << rightmost_overlap_dis;
       /*  利用车道数来判断 */
       if ((lane_count > map_lane_count) && ((emergencyStart < 80.0) && (emergencyStart > 0.0))) {
         road_selected_emlane_filtered.pop_back();
-        SD_COARSE_MATCH_LOG << "[FilterEmergencyLane]  pop_back in front ";
+        HNOA_L3_LOG << "[FilterEmergencyLane]  pop_back in front ";
       } else if ((lane_count >= map_lane_count) && ((emergencyStart < 0.0) && (emergencyEnd > 0.0))) {
         road_selected_emlane_filtered.pop_back();
-        SD_COARSE_MATCH_LOG << "[FilterEmergencyLane] pop_back between";
+        HNOA_L3_LOG << "[FilterEmergencyLane] pop_back between";
       }
     } else {
     }
   } else {
   }
 
-  SD_COARSE_MATCH_LOG << "[FilterEmergencyLane]Current bevlane num  :" << lane_count
-                      << " Current maplane num(normal): " << map_normal_lane_count;
-  SD_COARSE_MATCH_LOG << "[FilterEmergencyLane]road_selected_emlane_filtered: "
-                      << fmt::format(" [{}]  ", fmt::join(road_selected_emlane_filtered, ", "))
-                      << " size: " << road_selected_emlane_filtered.size();
+  HNOA_L3_LOG << "[FilterEmergencyLane]Current bevlane num  :" << lane_count << " Current maplane num(normal): " << map_normal_lane_count;
+  HNOA_L3_LOG << "[FilterEmergencyLane]road_selected_emlane_filtered: "
+              << fmt::format(" [{}]  ", fmt::join(road_selected_emlane_filtered, ", "))
+              << " size: " << road_selected_emlane_filtered.size();
   return road_selected_emlane_filtered;
 }
 
@@ -6387,7 +6368,7 @@ std::vector<uint64_t> SdNavigationHighway::FilterEmergencyLane(const std::shared
   * @return 重叠距离
 */
 double SdNavigationHighway::calculateOverlapDisinRange(double rangeStart, double rangeEnd, const std::vector<Eigen::Vector2f> geos) {
-  SD_COARSE_MATCH_LOG << "[calculateOverlapDisinRange]Entering...";
+  HNOA_L3_LOG << "[calculateOverlapDisinRange]Entering...";
 
   // 确保范围有效
   if (rangeStart >= rangeEnd) {
@@ -6412,8 +6393,8 @@ double SdNavigationHighway::calculateOverlapDisinRange(double rangeStart, double
   // 计算重叠部分
   double overlapStart = std::max(laneStart, rangeStart);
   double overlapEnd   = std::min(laneEnd, rangeEnd);
-  SD_COARSE_MATCH_LOG << "[calculateOverlapDisinRange] Exiting..."
-                      << " overlapStart: " << overlapStart << " overlapEnd: " << overlapEnd;
+  HNOA_L3_LOG << "[calculateOverlapDisinRange] Exiting..."
+              << " overlapStart: " << overlapStart << " overlapEnd: " << overlapEnd;
   // 如果存在重叠，返回重叠距离
   return (overlapStart < overlapEnd) ? (overlapEnd - overlapStart) : 0.0;
 }
@@ -6431,13 +6412,13 @@ std::vector<uint64_t> SdNavigationHighway::FilterACCLane(const std::shared_ptr<R
                                                          uint64_t &acc_adj_lane_id) {
   // 判断road_selected是否为空，空则返回 2025.10.15
   if (road_selected.empty()) {
-    SD_COARSE_MATCH_LOG << "[FilterACCLane]  road_selected is empty! ";
+    HNOA_L3_LOG << "[FilterACCLane]  road_selected is empty! ";
     return road_selected;
   }
   std::vector<uint64_t> road_selected_acclane_filtered(road_selected);
   std::vector<uint64_t> road_selected_normal_lanes = {};
-  SD_COARSE_MATCH_LOG << "Entering FilterACCLane function with inputs: "
-                      << fmt::format(" [{}]  ", fmt::join(road_selected_acclane_filtered, ", ")) << " size: " << road_selected.size();
+  HNOA_L3_LOG << "Entering FilterACCLane function with inputs: " << fmt::format(" [{}]  ", fmt::join(road_selected_acclane_filtered, ", "))
+              << " size: " << road_selected.size();
   // 获取车道列表
 
   size_t lane_count             = 0;
@@ -6464,8 +6445,8 @@ std::vector<uint64_t> SdNavigationHighway::FilterACCLane(const std::shared_ptr<R
 
         double overlap_dis     = calculateOverlapDisinRange(frontRange.first, frontRange.second, *single_lane->geos);
         double cur_overlap_dis = calculateOverlapDisinRange(-50.0, 150.0, *single_lane->geos);
-        SD_COARSE_MATCH_LOG << "single_lane_id: " << single_lane->id << " lane_start_x: " << single_lane->geos->front().x()
-                            << " lane_end_x: " << single_lane->geos->back().x() << "overlap_dis: " << overlap_dis;
+        HNOA_L3_LOG << "single_lane_id: " << single_lane->id << " lane_start_x: " << single_lane->geos->front().x()
+                    << " lane_end_x: " << single_lane->geos->back().x() << "overlap_dis: " << overlap_dis;
         if ((overlap_dis > min_overlap_threshold)) {
           lane_count++;
         }
@@ -6475,8 +6456,8 @@ std::vector<uint64_t> SdNavigationHighway::FilterACCLane(const std::shared_ptr<R
       }
     }
   }
-  SD_COARSE_MATCH_LOG << "[FilterACCLane] acc overlap lane_count :" << lane_count << " ,current_lane_count: " << current_lane_count
-                      << " Current maplane num(normal): " << map_normal_lane_count;
+  HNOA_L3_LOG << "[FilterACCLane] acc overlap lane_count :" << lane_count << " ,current_lane_count: " << current_lane_count
+              << " Current maplane num(normal): " << map_normal_lane_count;
   /* 800m内出现加速车道 */
   if (sd_acc_lane_info_.exists) {
     // 获取第一个 加速车道范围 [start_s, end_s]
@@ -6491,8 +6472,8 @@ std::vector<uint64_t> SdNavigationHighway::FilterACCLane(const std::shared_ptr<R
     double mergeStart     = firstRange.first;
     double mergeEnd       = firstRange.second;
     map_normal_lane_count = sd_acc_lane_info_.normal_lane_num;
-    SD_COARSE_MATCH_LOG << "acc  Start:" << mergeStart << ", acc End:" << mergeEnd;
-    SD_COARSE_MATCH_LOG << "map_normal_lane_count:" << map_normal_lane_count;
+    HNOA_L3_LOG << "acc  Start:" << mergeStart << ", acc End:" << mergeEnd;
+    HNOA_L3_LOG << "map_normal_lane_count:" << map_normal_lane_count;
     /* 先匹配加速车道 */ /* CNOAC2-8901 */
     if ((mergeStart < 100.0) && (mergeEnd > 0.0) && (lane_count > 2) &&
         (lane_count > map_normal_lane_count || road_selected_acclane_filtered.size() > map_normal_lane_count) &&
@@ -6521,9 +6502,9 @@ std::vector<uint64_t> SdNavigationHighway::FilterACCLane(const std::shared_ptr<R
     }
   }
 
-  SD_COARSE_MATCH_LOG << "[FilterACCLane] acc_lane_id: " << acc_lane_id << ", acc_adj_lane_id: " << acc_adj_lane_id;
-  SD_COARSE_MATCH_LOG << "[FilterACCLane]final lanes: " << fmt::format(" [{}]  ", fmt::join(road_selected_acclane_filtered, ", "))
-                      << " size: " << road_selected_acclane_filtered.size();
+  HNOA_L3_LOG << "[FilterACCLane] acc_lane_id: " << acc_lane_id << ", acc_adj_lane_id: " << acc_adj_lane_id;
+  HNOA_L3_LOG << "[FilterACCLane]final lanes: " << fmt::format(" [{}]  ", fmt::join(road_selected_acclane_filtered, ", "))
+              << " size: " << road_selected_acclane_filtered.size();
   return road_selected_acclane_filtered;
 }
 
@@ -6539,14 +6520,14 @@ std::vector<uint64_t> SdNavigationHighway::FilterSplitLane(const std::shared_ptr
                                                            uint64_t acc_lane_id, BevMapInfoPtr &GlobalBevMapOutPut) {
   // 判断road_selected是否为空，空则返回
   if (road_selected.empty()) {
-    SD_COARSE_MATCH_LOG << "[FilterSplitLane]  road_selected is empty! ";
+    HNOA_L3_LOG << "[FilterSplitLane]  road_selected is empty! ";
     return road_selected;
   }
   auto                 &all_bev_edges = raw_bev_map->edges;
   std::vector<uint64_t> rsplit_lane_filtered(road_selected);
   std::vector<uint64_t> split_indices_id_to_remove;
-  SD_COARSE_MATCH_LOG << "Entering FilterSplitLane function with inputs: " << fmt::format(" [{}]  ", fmt::join(rsplit_lane_filtered, ", "))
-                      << " size: " << road_selected.size();
+  HNOA_L3_LOG << "Entering FilterSplitLane function with inputs: " << fmt::format(" [{}]  ", fmt::join(rsplit_lane_filtered, ", "))
+              << " size: " << road_selected.size();
 
   bool has_junction_distant          = false; /* 300m内存在路口 */
   bool has_junction_app_ramp         = false; /* [0,300m]的最近路口为途径下匝道 */
@@ -6556,13 +6537,13 @@ std::vector<uint64_t> SdNavigationHighway::FilterSplitLane(const std::shared_ptr
 
   std::unordered_set<uint64_t> processed_lanes;
   for (auto &sd_junction_tmp : sd_junction_infos_) {
-    SD_COARSE_MATCH_LOG << "[SDNOA Junction] ,id : " << sd_junction_tmp.junction_id
-                        << " ,type: " << StrNaviJunctionHighway(static_cast<int>(sd_junction_tmp.junction_type))
-                        << " ,offset:  " << sd_junction_tmp.offset << "  ,main_road_lane_nums: " << sd_junction_tmp.main_road_lane_nums
-                        << " ,direction: " << StrNaviSplitDirectionHighway(sd_junction_tmp.split_direction)
-                        << " ,target_road_lane_nums: " << sd_junction_tmp.target_road_lane_nums
-                        << " ,passed_flag: " << (int)sd_junction_tmp.has_passed_flag
-                        << " ,effected_flag: " << (int)sd_junction_tmp.has_effected_flag;
+    HNOA_L3_LOG << "[SDNOA Junction] ,id : " << sd_junction_tmp.junction_id
+                << " ,type: " << StrNaviJunctionHighway(static_cast<int>(sd_junction_tmp.junction_type))
+                << " ,offset:  " << sd_junction_tmp.offset << "  ,main_road_lane_nums: " << sd_junction_tmp.main_road_lane_nums
+                << " ,direction: " << StrNaviSplitDirectionHighway(sd_junction_tmp.split_direction)
+                << " ,target_road_lane_nums: " << sd_junction_tmp.target_road_lane_nums
+                << " ,passed_flag: " << (int)sd_junction_tmp.has_passed_flag
+                << " ,effected_flag: " << (int)sd_junction_tmp.has_effected_flag;
   }
 
   for (auto &sd_junction : sd_junction_infos_) {
@@ -6597,8 +6578,8 @@ std::vector<uint64_t> SdNavigationHighway::FilterSplitLane(const std::shared_ptr
         sd_junction.junction_type == JunctionType::RampInto) {
       exit_jct              = sd_junction;
       has_junction_rampinto = true;
-      SD_COARSE_MATCH_LOG << "  [FilterSplitLane]   has_junction_rampinto. "
-                          << "exit_jct.offset : " << exit_jct.offset;
+      HNOA_L3_LOG << "  [FilterSplitLane]   has_junction_rampinto. "
+                  << "exit_jct.offset : " << exit_jct.offset;
       break;
     }
   }
@@ -6616,23 +6597,21 @@ std::vector<uint64_t> SdNavigationHighway::FilterSplitLane(const std::shared_ptr
     if (has_junction_rampinto && std::abs(exit_jct.offset - firstRange.second) < 150 && firstRange.first > 80) {
 
       has_junction_rampinto_distant = true;
-      SD_COARSE_MATCH_LOG << "  [FilterSplitLane]   exit_jct matched dec lane, has_junction_rampinto_distant: "
-                          << has_junction_rampinto_distant;
+      HNOA_L3_LOG << "  [FilterSplitLane]   exit_jct matched dec lane, has_junction_rampinto_distant: " << has_junction_rampinto_distant;
     } else if (has_junction_rampinto) {
 
       //has_junction_rampinto_distant = true;
-      SD_COARSE_MATCH_LOG << "  [FilterSplitLane]   exit_jct dismatched dec lane, has_junction_rampinto_distant: "
-                          << has_junction_rampinto_distant;
+      HNOA_L3_LOG << "  [FilterSplitLane]   exit_jct dismatched dec lane, has_junction_rampinto_distant: " << has_junction_rampinto_distant;
     } else {
     }
   }
-  SD_COARSE_MATCH_LOG << "  [FilterSplitLane]   exit_jct.offset : " << exit_jct.offset << " firstRange.start: " << firstRange.first
-                      << " firstRange.end:  " << firstRange.second;
+  HNOA_L3_LOG << "  [FilterSplitLane]   exit_jct.offset : " << exit_jct.offset << " firstRange.start: " << firstRange.first
+              << " firstRange.end:  " << firstRange.second;
 
-  SD_COARSE_MATCH_LOG << "  [FilterSplitLane]   has_junction_distant: " << has_junction_distant
-                      << " has_junction_app_ramp: " << has_junction_app_ramp << " has_junction_rampinto: " << has_junction_rampinto
-                      << " has_junction_rampinto_distant: " << has_junction_rampinto_distant
-                      << " has_junction_app_merge: " << has_junction_app_merge;
+  HNOA_L3_LOG << "  [FilterSplitLane]   has_junction_distant: " << has_junction_distant
+              << " has_junction_app_ramp: " << has_junction_app_ramp << " has_junction_rampinto: " << has_junction_rampinto
+              << " has_junction_rampinto_distant: " << has_junction_rampinto_distant
+              << " has_junction_app_merge: " << has_junction_app_merge;
   /* 远处无路口且距离下匝道还远，或者 远处无路口且也没有下匝道，或者 前方有途径匝道，正常过滤 */
   if ((!has_junction_distant && has_junction_rampinto_distant) || (!has_junction_distant && !has_junction_rampinto) ||
       has_junction_app_ramp || has_junction_app_merge) {
@@ -6648,7 +6627,7 @@ std::vector<uint64_t> SdNavigationHighway::FilterSplitLane(const std::shared_ptr
     pre_split_lanes_to_move_.split_lane_ids = split_indices_id_to_remove;
     pre_split_lanes_to_move_.keep_count     = 0;
     // 拆解对应车道的前继及其前继车道的后继
-    uint64_t prelane_id = 0;
+    uint64_t prelane_id     = 0;
     uint64_t pre_prelane_id = 0;
     for (auto &lane : GlobalBevMapOutPut->lane_infos) {
       if (lane.id == split_indices_id_to_remove[0]) {
@@ -6657,11 +6636,11 @@ std::vector<uint64_t> SdNavigationHighway::FilterSplitLane(const std::shared_ptr
         if (!lane.previous_lane_ids.empty()) {
           prelane_id = lane.previous_lane_ids[0];
           lane.previous_lane_ids.clear();  // 清空目标车道的前继
-          SD_COARSE_MATCH_LOG << "  [FilterSplitLane]   BEV lane ID: " << split_indices_id_to_remove[0] << " 's pre: " << prelane_id
-                              << " is clear. ";
+          HNOA_L3_LOG << "  [FilterSplitLane]   BEV lane ID: " << split_indices_id_to_remove[0] << " 's pre: " << prelane_id
+                      << " is clear. ";
         }
-        SD_COARSE_MATCH_LOG << "  [FilterSplitLane]   BEV lane ID: " << split_indices_id_to_remove[0] << " is split lane ."
-                            << " is_topo_disassembled : " << lane.is_topo_disassembled;
+        HNOA_L3_LOG << "  [FilterSplitLane]   BEV lane ID: " << split_indices_id_to_remove[0] << " is split lane ."
+                    << " is_topo_disassembled : " << lane.is_topo_disassembled;
       }
     }
     // 前继的前继
@@ -6670,40 +6649,24 @@ std::vector<uint64_t> SdNavigationHighway::FilterSplitLane(const std::shared_ptr
         lane.is_topo_disassembled = true;
         pre_prelane_id            = lane.previous_lane_ids[0];
         lane.previous_lane_ids.clear();  // 清空前继车道的前继
-        SD_COARSE_MATCH_LOG << "  [FilterSplitLane]   BEV lane ID: " << lane.id << " is_topo_disassembled : " << lane.is_topo_disassembled
-                            << " pre: " << pre_prelane_id << "is clear. ";
+        HNOA_L3_LOG << "  [FilterSplitLane]   BEV lane ID: " << lane.id << " is_topo_disassembled : " << lane.is_topo_disassembled
+                    << " pre: " << pre_prelane_id << "is clear. ";
       }
     }
     // 删除prepre的后继，即pre
     for (auto &lane : GlobalBevMapOutPut->lane_infos) {
       if (lane.id == pre_prelane_id && !lane.next_lane_ids.empty()) {
         lane.next_lane_ids.erase(std::remove(lane.next_lane_ids.begin(), lane.next_lane_ids.end(), prelane_id), lane.next_lane_ids.end());
-        SD_COARSE_MATCH_LOG << "[FilterSplitLane]   pre pre lane. " << pre_prelane_id
-                            << " next_lane_ids: " << fmt::format(" [{}]  ", fmt::join(lane.next_lane_ids, ", ")) << " removed "
-                            << prelane_id;
+        HNOA_L3_LOG << "[FilterSplitLane]   pre pre lane. " << pre_prelane_id
+                    << " next_lane_ids: " << fmt::format(" [{}]  ", fmt::join(lane.next_lane_ids, ", ")) << " removed " << prelane_id;
       }
     }
   } else if (split_indices_id_to_remove.empty() && !pre_split_lanes_to_move_.split_lane_ids.empty()) /* previous is not empty */
   {
-    bool has_common_element = false;
-    // 检查rsplit_lane_filtered中是否存在pre_split_lanes_to_move_.split_lane_ids中的元素
     for (int id : pre_split_lanes_to_move_.split_lane_ids) {
-        if (std::find(rsplit_lane_filtered.begin(), rsplit_lane_filtered.end(), id) != rsplit_lane_filtered.end()) {
-            has_common_element = true;
-            break;
-        }
+      rsplit_lane_filtered.erase(std::remove(rsplit_lane_filtered.begin(), rsplit_lane_filtered.end(), id), rsplit_lane_filtered.end());
     }
-    if (has_common_element) {
-        // 存在共同元素，执行删除操作并增加keep_count
-        for (int id : pre_split_lanes_to_move_.split_lane_ids) {
-            rsplit_lane_filtered.erase(std::remove(rsplit_lane_filtered.begin(), rsplit_lane_filtered.end(), id), rsplit_lane_filtered.end());
-        }
-        pre_split_lanes_to_move_.keep_count++;
-    } else {
-        // 不存在共同元素，清空split_lane_ids并将keep_count置为0
-        pre_split_lanes_to_move_.split_lane_ids.clear();
-        pre_split_lanes_to_move_.keep_count = 0;
-    }
+    pre_split_lanes_to_move_.keep_count++;
   } else {
     /* null */
   }
@@ -6712,12 +6675,12 @@ std::vector<uint64_t> SdNavigationHighway::FilterSplitLane(const std::shared_ptr
     pre_split_lanes_to_move_.keep_count     = 0;
     pre_split_lanes_to_move_.split_lane_ids = {};
   }
-  SD_COARSE_MATCH_LOG << "[FilterSplitLane]indices_id_to_remove: " << fmt::format(" [{}]  ", fmt::join(split_indices_id_to_remove, ", "));
-  SD_COARSE_MATCH_LOG << "[FilterSplitLane]pre_split_lanes_to_move_: "
-                      << fmt::format(" [{}]  ", fmt::join(pre_split_lanes_to_move_.split_lane_ids, ", "))
-                      << " keep_count: " << pre_split_lanes_to_move_.keep_count;
-  SD_COARSE_MATCH_LOG << "[FilterSplitLane] split_lane_filtered: " << fmt::format(" [{}]  ", fmt::join(rsplit_lane_filtered, ", "))
-                      << " size: " << rsplit_lane_filtered.size();
+  HNOA_L3_LOG << "[FilterSplitLane]indices_id_to_remove: " << fmt::format(" [{}]  ", fmt::join(split_indices_id_to_remove, ", "));
+  HNOA_L3_LOG << "[FilterSplitLane]pre_split_lanes_to_move_: "
+              << fmt::format(" [{}]  ", fmt::join(pre_split_lanes_to_move_.split_lane_ids, ", "))
+              << " keep_count: " << pre_split_lanes_to_move_.keep_count;
+  HNOA_L3_LOG << "[FilterSplitLane] split_lane_filtered: " << fmt::format(" [{}]  ", fmt::join(rsplit_lane_filtered, ", "))
+              << " size: " << rsplit_lane_filtered.size();
   return rsplit_lane_filtered;
 }
 
@@ -6728,7 +6691,7 @@ void SdNavigationHighway::DetectSplitLanes(const std::vector<uint64_t>      &rsp
                                            bool has_junction_app_merge, uint64_t acc_lane_id) {
   // 车道数量不足时直接返回
   if (rsplit_lane_filtered.size() < 2) {
-    SD_COARSE_MATCH_LOG << "[DetectSplitLanes] Insufficient lanes (" << rsplit_lane_filtered.size() << "), skip detection";
+    HNOA_L3_LOG << "[DetectSplitLanes] Insufficient lanes (" << rsplit_lane_filtered.size() << "), skip detection";
     return;
   }
 
@@ -6743,12 +6706,12 @@ void SdNavigationHighway::DetectSplitLanes(const std::vector<uint64_t>      &rsp
       if (HasAncestorWithSplitRight(lane_info)) {
         // 只移除最后一条车道（最右车道）
         split_indices_id_to_remove.push_back(lane2);
-        SD_COARSE_MATCH_LOG << "[DetectSplitLanes] Two-lane split detected. Removing last lane (rightmost): " << lane2;
+        HNOA_L3_LOG << "[DetectSplitLanes] Two-lane split detected. Removing last lane (rightmost): " << lane2;
       } else {
-        SD_COARSE_MATCH_LOG << "[DetectSplitLanes] Two-lane split detected. But the right lane is not split right.";
+        HNOA_L3_LOG << "[DetectSplitLanes] Two-lane split detected. But the right lane is not split right.";
       }
     } else {
-      SD_COARSE_MATCH_LOG << "[DetectSplitLanes] Two-lane split is not detected.";
+      HNOA_L3_LOG << "[DetectSplitLanes] Two-lane split is not detected.";
     }
     return;
   }
@@ -6775,7 +6738,7 @@ void SdNavigationHighway::DetectSplitLanes(const std::vector<uint64_t>      &rsp
         std::swap(laneStart, laneEnd);
       }
       double overlap_dis = laneEnd - laneStart;
-      SD_COARSE_MATCH_LOG << "[DetectSplitLanes] bdry  length: " << overlap_dis;
+      HNOA_L3_LOG << "[DetectSplitLanes] bdry  length: " << overlap_dis;
       if (overlap_dis > max_right_overlap && overlap_dis >= min_overlap_threshold) {
         max_right_overlap = overlap_dis;
         best_right_edge   = edge;
@@ -6795,14 +6758,14 @@ void SdNavigationHighway::DetectSplitLanes(const std::vector<uint64_t>      &rsp
         std::swap(laneStart, laneEnd);
       }
       double overlap_dis = laneEnd - laneStart;
-      SD_COARSE_MATCH_LOG << "[DetectSplitLanes] bdry  length: " << overlap_dis;
+      HNOA_L3_LOG << "[DetectSplitLanes] bdry  length: " << overlap_dis;
       if (overlap_dis > max_left_overlap && overlap_dis >= min_overlap_threshold) {
         max_left_overlap = overlap_dis;
         best_left_edge   = edge;
       }
     }
   }
-  SD_COARSE_MATCH_LOG << "[DetectSplitLanes] best_left_edge: " << best_left_edge.id << " best_right_edge: " << best_right_edge.id;
+  HNOA_L3_LOG << "[DetectSplitLanes] best_left_edge: " << best_left_edge.id << " best_right_edge: " << best_right_edge.id;
   /* 途径汇出口 */
   if (has_junction_app_ramp) {
     // 检测最后一条车道是否分叉（与倒数第二条车道共享前继）
@@ -6811,7 +6774,7 @@ void SdNavigationHighway::DetectSplitLanes(const std::vector<uint64_t>      &rsp
     uint64_t second_last_lane = rsplit_lane_filtered[last_idx - 1];
     //uint64_t third_last_lane  = rsplit_lane_filtered[last_idx - 2];
     if (CheckLanesShareAncestor(last_lane, second_last_lane)) {
-      SD_COARSE_MATCH_LOG << "[DetectSplitLanes] Last lane " << last_lane << " is split type before app_ramp junction";
+      HNOA_L3_LOG << "[DetectSplitLanes] Last lane " << last_lane << " is split type before app_ramp junction";
       split_indices_id_to_remove.push_back(last_lane);
     }
   } else if (has_junction_app_merge) {
@@ -6820,7 +6783,7 @@ void SdNavigationHighway::DetectSplitLanes(const std::vector<uint64_t>      &rsp
     uint64_t second_lane = rsplit_lane_filtered[1];
     uint64_t third_lane  = rsplit_lane_filtered[2];
     if (CheckLanesShareAncestor(first_lane, second_lane)) {
-      SD_COARSE_MATCH_LOG << "[DetectSplitLanes] First lane " << first_lane << " is split type";
+      HNOA_L3_LOG << "[DetectSplitLanes] First lane " << first_lane << " is split type";
       split_indices_id_to_remove.push_back(first_lane);
     }
   } else {
@@ -6829,7 +6792,7 @@ void SdNavigationHighway::DetectSplitLanes(const std::vector<uint64_t>      &rsp
     uint64_t second_lane = rsplit_lane_filtered[1];
     uint64_t third_lane  = rsplit_lane_filtered[2];
     if (CheckLanesShareAncestor(first_lane, second_lane)) {
-      SD_COARSE_MATCH_LOG << "[DetectSplitLanes] First lane " << first_lane << " is split type";
+      HNOA_L3_LOG << "[DetectSplitLanes] First lane " << first_lane << " is split type";
       split_indices_id_to_remove.push_back(first_lane);
     }
     //如果左二车道距离左边界很近，则判断左二左三是否分叉
@@ -6841,8 +6804,8 @@ void SdNavigationHighway::DetectSplitLanes(const std::vector<uint64_t>      &rsp
         //double overlap_dis      = calculateOverlapDistance(sd_harbor_stop_info_, *single_lane->geos);
         double dis_to_rightbdry = cem::fusion::LaneGeometry::GetDistanceBetweenLines(*single_lane->geos, *best_left_edge.geos);
 
-        SD_COARSE_MATCH_LOG << "[DetectSplitLanes] dis line " << single_lane->id << " to " << best_left_edge.id
-                            << "  rightbdry is : " << dis_to_rightbdry;
+        HNOA_L3_LOG << "[DetectSplitLanes] dis line " << single_lane->id << " to " << best_left_edge.id
+                    << "  rightbdry is : " << dis_to_rightbdry;
         if (dis_to_rightbdry < 1.5 && CheckLanesShareAncestor(second_lane, third_lane)) {
           split_indices_id_to_remove.push_back(second_lane);
         }
@@ -6855,7 +6818,7 @@ void SdNavigationHighway::DetectSplitLanes(const std::vector<uint64_t>      &rsp
     uint64_t second_last_lane = rsplit_lane_filtered[last_idx - 1];
     uint64_t third_last_lane  = rsplit_lane_filtered[last_idx - 2];
     if (CheckLanesShareAncestor(last_lane, second_last_lane)) {
-      SD_COARSE_MATCH_LOG << "[DetectSplitLanes] Last lane " << last_lane << " is split type";
+      HNOA_L3_LOG << "[DetectSplitLanes] Last lane " << last_lane << " is split type";
       split_indices_id_to_remove.push_back(last_lane);
     }
     //如果右二车道距离左边界很近，则判断右二右三是否分叉
@@ -6867,8 +6830,8 @@ void SdNavigationHighway::DetectSplitLanes(const std::vector<uint64_t>      &rsp
         double overlap_dis      = calculateOverlapDistance(sd_harbor_stop_info_, *single_lane->geos);
         double dis_to_rightbdry = cem::fusion::LaneGeometry::GetDistanceBetweenLines(*single_lane->geos, *best_right_edge.geos);
 
-        SD_COARSE_MATCH_LOG << "[DetectSplitLanes] dis line " << single_lane->id << " to " << best_right_edge.id
-                            << "  rightbdry is : " << dis_to_rightbdry;
+        HNOA_L3_LOG << "[DetectSplitLanes] dis line " << single_lane->id << " to " << best_right_edge.id
+                    << "  rightbdry is : " << dis_to_rightbdry;
         if (dis_to_rightbdry < 1.5 && CheckLanesShareAncestor(second_last_lane, third_last_lane)) {
           split_indices_id_to_remove.push_back(second_last_lane);
         }
@@ -6885,8 +6848,8 @@ bool SdNavigationHighway::CheckLanesShareAncestor(uint64_t lane1, uint64_t lane2
   std::unordered_set<uint64_t> ancestors2 = CollectPreLanes(lane2);
 
   // 调试输出前继集合
-  SD_COARSE_MATCH_LOG << "[CheckLanesShareAncestor] Lane " << lane1 << " ancestors: " << PrintProcessedLanes(ancestors1);
-  SD_COARSE_MATCH_LOG << "[CheckLanesShareAncestor] Lane " << lane2 << " ancestors: " << PrintProcessedLanes(ancestors2);
+  HNOA_L3_LOG << "[CheckLanesShareAncestor] Lane " << lane1 << " ancestors: " << PrintProcessedLanes(ancestors1);
+  HNOA_L3_LOG << "[CheckLanesShareAncestor] Lane " << lane2 << " ancestors: " << PrintProcessedLanes(ancestors2);
 
   // 检查前继集合交集（排除自身）
   for (uint64_t ancestor : ancestors1) {
@@ -6895,13 +6858,12 @@ bool SdNavigationHighway::CheckLanesShareAncestor(uint64_t lane1, uint64_t lane2
       continue;
 
     if (ancestors2.count(ancestor)) {
-      SD_COARSE_MATCH_LOG << "[CheckLanesShareAncestor] Found shared ancestor: " << ancestor << " between lanes " << lane1 << " and "
-                          << lane2;
+      HNOA_L3_LOG << "[CheckLanesShareAncestor] Found shared ancestor: " << ancestor << " between lanes " << lane1 << " and " << lane2;
       return true;
     }
   }
 
-  SD_COARSE_MATCH_LOG << "[CheckLanesShareAncestor] No shared ancestor found between lanes " << lane1 << " and " << lane2;
+  HNOA_L3_LOG << "[CheckLanesShareAncestor] No shared ancestor found between lanes " << lane1 << " and " << lane2;
   return false;
 }
 
@@ -6970,7 +6932,7 @@ void SdNavigationHighway::UpdateHarborLaneType(const std::vector<uint64_t> &road
   for (auto &lane : GlobalBevMapOutPut->lane_infos) {
     if (lane.id == target_harbor_id) {
       lane.lane_type = BevLaneType::LANE_TYPE_HARBOR_STOP;
-      SD_COARSE_MATCH_LOG << "  [UpdateHarborLaneType] Setting rightmost BEV lane ID: " << lane.id << " to LANE_TYPE_HARBOR_STOP";
+      HNOA_L3_LOG << "  [UpdateHarborLaneType] Setting rightmost BEV lane ID: " << lane.id << " to LANE_TYPE_HARBOR_STOP";
       break;
     }
   }
@@ -6985,7 +6947,7 @@ bool SdNavigationHighway::EgoInMainRoad() {
   for (const auto &sec : ld_route->sections) {
     if (sec.id == ego_sec) {
       const bool isInMainRoad = LD_IsMainRoadSection(sec);
-      SD_COARSE_MATCH_LOG << fmt::format("[LD] Section {} isInMainRoad: {}", ego_sec, isInMainRoad);
+      HNOA_L3_LOG << fmt::format("[LD] Section {} isInMainRoad: {}", ego_sec, isInMainRoad);
       return isInMainRoad;
     }
   }
@@ -6997,24 +6959,23 @@ uint64_t SdNavigationHighway::FindOriginNormalLaneIdFromAccLane(const cem::messa
   // Step 1: 获取加速车道左侧的车道（通过 left_lane_id）
   uint64_t left_lane_id = acc_lane->left_lane_id;
   if (left_lane_id == 0) {
-    SD_COARSE_MATCH_LOG << "[FindOriginNormalLaneId] No left lane for acc lane " << acc_lane->id;
+    HNOA_L3_LOG << "[FindOriginNormalLaneId] No left lane for acc lane " << acc_lane->id;
     return 0;
   }
 
   auto left_lane_info = INTERNAL_PARAMS.ld_map_data.GetLDLaneInfoById(left_lane_id);
   if (!left_lane_info) {
-    SD_COARSE_MATCH_LOG << "[FindOriginNormalLaneId] Failed to get left lane info for id: " << left_lane_id;
+    HNOA_L3_LOG << "[FindOriginNormalLaneId] Failed to get left lane info for id: " << left_lane_id;
     return 0;
   }
 
   // 确保是普通车道
   if (left_lane_info->type != cem::message::env_model::LaneType::LANE_NORMAL) {
-    SD_COARSE_MATCH_LOG << "[FindOriginNormalLaneId] Left lane is not normal type, type: " << static_cast<int>(left_lane_info->type);
+    HNOA_L3_LOG << "[FindOriginNormalLaneId] Left lane is not normal type, type: " << static_cast<int>(left_lane_info->type);
     return 0;
   }
 
-  SD_COARSE_MATCH_LOG << "[FindOriginNormalLaneId] Found left normal lane: " << left_lane_id
-                      << " in section: " << left_lane_info->section_id;
+  HNOA_L3_LOG << "[FindOriginNormalLaneId] Found left normal lane: " << left_lane_id << " in section: " << left_lane_info->section_id;
 
   // Step 2: 回溯 previous_lane_ids 链，查找是否属于 ego_section_id
   std::set<uint64_t>                       visited;  // 防止环路
@@ -7023,8 +6984,7 @@ uint64_t SdNavigationHighway::FindOriginNormalLaneIdFromAccLane(const cem::messa
   while (current && visited.insert(current->id).second) {
     // 判断当前车道是否属于自车所在 section
     if (current->section_id == ego_section_id) {
-      SD_COARSE_MATCH_LOG << "[FindOriginNormalLaneId] Found origin lane in ego section: " << current->id << " at section "
-                          << current->section_id;
+      HNOA_L3_LOG << "[FindOriginNormalLaneId] Found origin lane in ego section: " << current->id << " at section " << current->section_id;
       return current->id;
     }
 
@@ -7036,14 +6996,14 @@ uint64_t SdNavigationHighway::FindOriginNormalLaneIdFromAccLane(const cem::messa
     uint64_t prev_id   = current->previous_lane_ids[0];  // 认为第一个为主流向前驱
     auto     prev_lane = INTERNAL_PARAMS.ld_map_data.GetLDLaneInfoById(prev_id);
     if (!prev_lane) {
-      SD_COARSE_MATCH_LOG << "[FindOriginNormalLaneId] Failed to get previous lane info: " << prev_id;
+      HNOA_L3_LOG << "[FindOriginNormalLaneId] Failed to get previous lane info: " << prev_id;
       break;
     }
 
     current = prev_lane;
   }
 
-  SD_COARSE_MATCH_LOG << "[FindOriginNormalLaneId] No matching lane found in ego section from acc lane " << acc_lane->id;
+  HNOA_L3_LOG << "[FindOriginNormalLaneId] No matching lane found in ego section from acc lane " << acc_lane->id;
   return 0;  // 未找到
 }
 /* 查找LD地图的加速车道邻车道在自车脚下的车道id,添加退出距离 */
@@ -7052,18 +7012,18 @@ uint64_t SdNavigationHighway::FindOriginNormalLaneIdFromAccLane2(const cem::mess
   // Step 1: 获取加速车道左侧的车道
   uint64_t left_lane_id = acc_lane->left_lane_id;
   if (left_lane_id == 0) {
-    SD_COARSE_MATCH_LOG << "[FindOriginNormalLaneId] No left lane for acc lane " << acc_lane->id;
+    HNOA_L3_LOG << "[FindOriginNormalLaneId] No left lane for acc lane " << acc_lane->id;
     return 0;
   }
 
   auto left_lane_info = INTERNAL_PARAMS.ld_map_data.GetLDLaneInfoById(left_lane_id);
   if (!left_lane_info || left_lane_info->type != cem::message::env_model::LaneType::LANE_NORMAL) {
-    SD_COARSE_MATCH_LOG << "[FindOriginNormalLaneId] Left lane is invalid or not normal type, id: " << left_lane_id;
+    HNOA_L3_LOG << "[FindOriginNormalLaneId] Left lane is invalid or not normal type, id: " << left_lane_id;
     return 0;
   }
 
-  SD_COARSE_MATCH_LOG << "[FindOriginNormalLaneId] Start tracing from left normal lane: " << left_lane_id << " in section "
-                      << left_lane_info->section_id;
+  HNOA_L3_LOG << "[FindOriginNormalLaneId] Start tracing from left normal lane: " << left_lane_id << " in section "
+              << left_lane_info->section_id;
 
   // Step 2: 回溯 previous_lane_ids，累计长度不超过 max_search_distance
   std::set<uint64_t>                       visited;
@@ -7073,8 +7033,8 @@ uint64_t SdNavigationHighway::FindOriginNormalLaneIdFromAccLane2(const cem::mess
   while (current && visited.insert(current->id).second) {
     // 检查当前车道是否在自车所在的 section
     if (current->section_id == ego_section_id) {
-      SD_COARSE_MATCH_LOG << "[FindOriginNormalLaneId] Found origin lane in ego section: " << current->id
-                          << " (accumulated backtrack: " << accumulated_length << " m)";
+      HNOA_L3_LOG << "[FindOriginNormalLaneId] Found origin lane in ego section: " << current->id
+                  << " (accumulated backtrack: " << accumulated_length << " m)";
       return current->id;
     }
 
@@ -7083,64 +7043,33 @@ uint64_t SdNavigationHighway::FindOriginNormalLaneIdFromAccLane2(const cem::mess
 
     // 判断是否超过最大搜索距离
     if (accumulated_length >= max_search_distance) {
-      SD_COARSE_MATCH_LOG << "[FindOriginNormalLaneId] Max search distance (" << max_search_distance << "m) exceeded. Stopping search.";
+      HNOA_L3_LOG << "[FindOriginNormalLaneId] Max search distance (" << max_search_distance << "m) exceeded. Stopping search.";
       break;
     }
 
     // 移动到前驱车道（取第一个为主流路径）
     if (current->previous_lane_ids.empty()) {
-      SD_COARSE_MATCH_LOG << "[FindOriginNormalLaneId] No more previous lanes. Search ended.";
+      HNOA_L3_LOG << "[FindOriginNormalLaneId] No more previous lanes. Search ended.";
       break;
     }
 
-    uint64_t prev_id = 0;
-
-    // 如果前驱车道数量大于1，需要根据merge属性选择合适的前驱车道
-    if (current->previous_lane_ids.size() > 1) {
-      SD_COARSE_MATCH_LOG << "[FindOriginNormalLaneId] Found " << current->previous_lane_ids.size()
-                          << " previous lanes, checking merge attributes for lane " << current->id;
-
-      // 遍历所有前驱车道，优先选择无merge属性的车道
-      for (uint64_t candidate_prev_id : current->previous_lane_ids) {
-        auto candidate_prev_lane = INTERNAL_PARAMS.ld_map_data.GetLDLaneInfoById(candidate_prev_id);
-        if (!candidate_prev_lane) {
-          SD_COARSE_MATCH_LOG << "[FindOriginNormalLaneId] Failed to get candidate previous lane info: " << candidate_prev_id;
-          continue;
-        }
-
-        // 检查merge属性，如果无merge属性则选择该车道
-        if (candidate_prev_lane->merge_topology == cem::message::env_model::MergeTopology::TOPOLOGY_MERGE_NONE) {
-          prev_id = candidate_prev_id;
-          SD_COARSE_MATCH_LOG << "[FindOriginNormalLaneId] Selected non-merge previous lane: " << prev_id;
-          break;
-        }
-      }
-
-      // 如果没有找到无merge属性的前驱车道，则使用第一个前驱车道作为默认选择
-      if (prev_id == 0) {
-        prev_id = current->previous_lane_ids[0];
-        SD_COARSE_MATCH_LOG << "[FindOriginNormalLaneId] No non-merge previous lane found, using first: " << prev_id;
-      }
-    } else {
-      // 如果只有一个前驱车道，直接使用
-      prev_id = current->previous_lane_ids[0];
-    }
+    uint64_t prev_id   = current->previous_lane_ids[0];
     auto     prev_lane = INTERNAL_PARAMS.ld_map_data.GetLDLaneInfoById(prev_id);
     if (!prev_lane) {
-      SD_COARSE_MATCH_LOG << "[FindOriginNormalLaneId] Failed to get previous lane info: " << prev_id;
+      HNOA_L3_LOG << "[FindOriginNormalLaneId] Failed to get previous lane info: " << prev_id;
       break;
     }
 
     current = prev_lane;
   }
 
-  SD_COARSE_MATCH_LOG << "[FindOriginNormalLaneId] Could not find lane in ego section within " << max_search_distance << "m backtracking.";
+  HNOA_L3_LOG << "[FindOriginNormalLaneId] Could not find lane in ego section within " << max_search_distance << "m backtracking.";
   return 0;  // 未找到符合条件的车道
 }
 
 void SdNavigationHighway::SetACCLaneInfo(AccLaneInfo &sd_acc_lane_info) {
   sd_acc_lane_info = sd_acc_lane_info_;
-  SD_COARSE_MATCH_LOG << "[SetACCLaneInfo] Normal lane id: " << sd_acc_lane_info_.ego_normal_lane_id;
+  HNOA_L3_LOG << "[SetACCLaneInfo] Normal lane id: " << sd_acc_lane_info_.ego_normal_lane_id;
 }
 
 /**
@@ -7166,8 +7095,7 @@ bool SdNavigationHighway::HasAncestorWithSplitRight(const BevLaneInfo *start_lan
 
     // 检查当前车道是否为右分叉出口
     if (current->split_topo_extend == cem::message::sensor::SplitTopoExtendType::TOPOLOGY_SPLIT_RIGHT) {
-      SD_COARSE_MATCH_LOG << "[HasAncestorWithSplitRight] Found TOPOLOGY_SPLIT_RIGHT at lane: " << current->id << " (depth: " << depth
-                          << ")";
+      HNOA_L3_LOG << "[HasAncestorWithSplitRight] Found TOPOLOGY_SPLIT_RIGHT at lane: " << current->id << " (depth: " << depth << ")";
       return true;
     }
 
@@ -7179,7 +7107,7 @@ bool SdNavigationHighway::HasAncestorWithSplitRight(const BevLaneInfo *start_lan
     uint64_t prev_id   = current->previous_lane_ids[0];
     auto     prev_lane = INTERNAL_PARAMS.raw_bev_data.GetLaneInfoById(prev_id);
     if (!prev_lane) {
-      SD_COARSE_MATCH_LOG << "[HasAncestorWithSplitRight] Failed to get previous lane info: " << prev_id;
+      HNOA_L3_LOG << "[HasAncestorWithSplitRight] Failed to get previous lane info: " << prev_id;
       break;
     }
 
@@ -7210,9 +7138,8 @@ bool SdNavigationHighway::IsApproachMergeJCT(std::vector<JunctionInfo *> &target
         if ((!near_exit) || (near_exit && exit_offset > junction->offset)) {
           approaching_merge = true;
           merge_jct         = *junction;
-          SD_COARSE_MATCH_LOG << " [IsApproachMergeJCT] APPROACHING junction merge ,offset: " << junction->offset
-                              << StrJunctionType(junction->junction_type)
-                              << "  junction's normal lane num:  " << junction->main_road_lane_nums;
+          HNOA_L3_LOG << " [IsApproachMergeJCT] APPROACHING junction merge ,offset: " << junction->offset
+                      << StrJunctionType(junction->junction_type) << "  junction's normal lane num:  " << junction->main_road_lane_nums;
           break;
         }
       }
@@ -7229,15 +7156,14 @@ bool SdNavigationHighway::IsApproachMergeJCT(std::vector<JunctionInfo *> &target
         if ((!near_exit) || (near_exit && exit_offset > junction.offset)) {
           approaching_merge = true;
           merge_jct         = junction;
-          SD_COARSE_MATCH_LOG << " [IsApproachMergeJCT] APPROACHING junction merge ,offset: " << junction.offset
-                              << StrJunctionType(junction.junction_type)
-                              << "  junction's normal lane num:  " << junction.main_road_lane_nums;
+          HNOA_L3_LOG << " [IsApproachMergeJCT] APPROACHING junction merge ,offset: " << junction.offset
+                      << StrJunctionType(junction.junction_type) << "  junction's normal lane num:  " << junction.main_road_lane_nums;
           break;
         }
       }
     }
   }
-  SD_COARSE_MATCH_LOG << " [IsApproachMergeJCT] APPROACHING junction merge:  " << approaching_merge;
+  HNOA_L3_LOG << " [IsApproachMergeJCT] APPROACHING junction merge:  " << approaching_merge;
   return approaching_merge;
 }
 
@@ -7258,7 +7184,7 @@ bool SdNavigationHighway::IsRampMergeJCT(std::vector<JunctionInfo *> &target_sd_
       }
     }
   }
-  SD_COARSE_MATCH_LOG << " [IsApproachMergeJCT]  junction ramp_merge:  " << ramp_merge;
+  HNOA_L3_LOG << " [IsApproachMergeJCT]  junction ramp_merge:  " << ramp_merge;
   return ramp_merge;
 }
 
@@ -7347,34 +7273,33 @@ bool SdNavigationHighway::RemoveHarborlaneCheck(const HarborStopInfo  &sd_harbor
 
     if ((sd_harbor_stop_info_.is_left_most) && (left_most_lane) && (left_most_lane->position != (int)BevLanePosition::LANE_LOC_EGO)) {
       double left_lane_length = left_most_lane->geos->back().x() - left_most_lane->geos->front().x();
-      SD_COARSE_MATCH_LOG << " [RemoveHarborlaneCheck] harbor_length :  " << harbor_length << "left_lane_length " << left_lane_length;
+      HNOA_L3_LOG << " [RemoveHarborlaneCheck] harbor_length :  " << harbor_length << "left_lane_length " << left_lane_length;
       if (left_lane_length < harbor_length + 100) {
         left_lenght_check = true;
       } else {
-        SD_COARSE_MATCH_LOG << " [RemoveHarborlaneCheck]  check fail for lane length is :  " << left_lane_length << " <  " << harbor_length
-                            << " + 100";
+        HNOA_L3_LOG << " [RemoveHarborlaneCheck]  check fail for lane length is :  " << left_lane_length << " <  " << harbor_length
+                    << " + 100";
       }
     } else {
-      SD_COARSE_MATCH_LOG << " [RemoveHarborlaneCheck]  check fail for lane position is :  " << left_most_lane->position
-                          << " not ego: " << (int)BevLanePosition::LANE_LOC_EGO;
+      HNOA_L3_LOG << " [RemoveHarborlaneCheck]  check fail for lane position is :  " << left_most_lane->position
+                  << " not ego: " << (int)BevLanePosition::LANE_LOC_EGO;
     }
-    if ((sd_harbor_stop_info_.is_right_most) && (right_most_lane) && (right_most_lane->position != (int)BevLanePosition::LANE_LOC_EGO) &&
-        (right_most_lane->previous_lane_ids.size() < 2)) {
+    if ((sd_harbor_stop_info_.is_right_most) && (right_most_lane) && (right_most_lane->position != (int)BevLanePosition::LANE_LOC_EGO)) {
       double right_lane_length = right_most_lane->geos->back().x() - right_most_lane->geos->front().x();
       if (right_lane_length < harbor_length + 100) {
         right_lenght_check = true;
       } else {
-        SD_COARSE_MATCH_LOG << " [RemoveHarborlaneCheck]  check fail for lane length is :  " << right_lane_length << " <  " << harbor_length
-                            << " + 100";
+        HNOA_L3_LOG << " [RemoveHarborlaneCheck]  check fail for lane length is :  " << right_lane_length << " <  " << harbor_length
+                    << " + 100";
       }
     } else {
-      SD_COARSE_MATCH_LOG << " [RemoveHarborlaneCheck]  check fail for lane position is :  " << right_most_lane->position
-                          << " not ego: " << (int)BevLanePosition::LANE_LOC_EGO;
+      HNOA_L3_LOG << " [RemoveHarborlaneCheck]  check fail for lane position is :  " << right_most_lane->position
+                  << " not ego: " << (int)BevLanePosition::LANE_LOC_EGO;
     }
 
     remove_enable = (left_lenght_check || right_lenght_check);
   }
-  SD_COARSE_MATCH_LOG << " [RemoveHarborlaneCheck] length & position check result :  " << remove_enable;
+  HNOA_L3_LOG << " [RemoveHarborlaneCheck] length & position check result :  " << remove_enable;
   return remove_enable;
 }
 
@@ -7386,37 +7311,36 @@ bool SdNavigationHighway::OnlyHarborSceneCheck(const HarborStopInfo    &sd_harbo
   bool left_check  = false;
   if (sd_harbor_stop_info_.exists && !g_emergency_lane_info_.right.exists) {
     result = true;
-    SD_COARSE_MATCH_LOG << " [OnlyHarborSceneCheck] OnlyHarborSceneCheck check result (right side) :  " << result;
+    HNOA_L3_LOG << " [OnlyHarborSceneCheck] OnlyHarborSceneCheck check result (right side) :  " << result;
   } else {
-    SD_COARSE_MATCH_LOG << " [OnlyHarborSceneCheck]  check fail cause emergency is: " << g_emergency_lane_info_.right.exists;
+    HNOA_L3_LOG << " [OnlyHarborSceneCheck]  check fail cause emergency is: " << g_emergency_lane_info_.right.exists;
   }
-  SD_COARSE_MATCH_LOG << " [OnlyHarborSceneCheck]   check result :  " << result;
+  HNOA_L3_LOG << " [OnlyHarborSceneCheck]   check result :  " << result;
   return result;
 }
 
 /* 左侧锥筒施工场景的判断：仅判断左侧成排锥筒将左侧车道拦住的场景 */
 /*
    * @brief 左侧锥筒施工场景的判断
-   * @param  
+   * @param
    * @return bool
   */
 bool SdNavigationHighway::LeftConstructionZoneCheck(const std::vector<uint64_t>      &road_selected_buslane_filtered,
                                                     const std::vector<BevLaneMarker> &all_bev_edges, std::vector<LaneType> &lanetype_list,
                                                     uint64_t &right_bev_emergency_laneid, uint64_t &left_bev_emergency_laneid) {
   bool   result                = false;
-  bool   final_result                = false;
+  bool   final_result          = false;
   int    lane_count            = 0;
   double min_overlap_threshold = 15.0;
   for (auto &id : road_selected_buslane_filtered) {
     auto single_lane = INTERNAL_PARAMS.raw_bev_data.GetLaneInfoById(id);
     if ((single_lane) && (!single_lane->geos->empty())) {
-      SD_COARSE_MATCH_LOG << "single_lane_id: " << single_lane->id << " lane_start_x: " << single_lane->geos->front().x()
-                          << " lane_start_y: " << single_lane->geos->front().y() << " lane_end_x: " << single_lane->geos->back().x()
-                          << " lane_end_y: " << single_lane->geos->back().y();
-
+      HNOA_L3_LOG << "single_lane_id: " << single_lane->id << " lane_start_x: " << single_lane->geos->front().x()
+                  << " lane_start_y: " << single_lane->geos->front().y() << " lane_end_x: " << single_lane->geos->back().x()
+                  << " lane_end_y: " << single_lane->geos->back().y();
 
       double overlap_dis = calculateOverlapDisinRange(-50.0, 150.0, *single_lane->geos);
-      SD_COARSE_MATCH_LOG << "overlap_dis:" << overlap_dis;
+      HNOA_L3_LOG << "overlap_dis:" << overlap_dis;
       if ((overlap_dis > min_overlap_threshold)) {
         lane_count++;
       }
@@ -7426,120 +7350,118 @@ bool SdNavigationHighway::LeftConstructionZoneCheck(const std::vector<uint64_t> 
   /*若没有通过拓扑找到港湾车道，则利用每条线到右边界的距离进行判断*/
   Edge_log_print(all_bev_edges);
 
-    // 步骤1: 左侧的正常路沿和锥筒路沿
+  // 步骤1: 左侧的正常路沿和锥筒路沿
 
-    BevLaneMarker best_left_edge;
-    BevLaneMarker best_right_edge;
-    BevLaneMarker best_cone_edge;
-    double        max_overlap_left  = -1.0;
-    double        max_overlap_right = -1.0;
-    double        max_cone_overlap  = -1.0;
-    /* 左侧路沿 */
-    for (auto &edge : all_bev_edges) {
-      if (((edge.road_edeg_pos == BevRoadEdgePosition::BEV_REP__LEFT) ||
-           ((edge.road_edeg_pos == BevRoadEdgePosition::BEV_REP__UNKNOWN) && (!edge.geos->empty()) && (edge.geos->front().y() > 0))) &&
-          edge.type != static_cast<uint32_t>(BoundaryType::FENCE_BOUNDARY)) {
-        double overlap_dis = calculateOverlapDisinRange(-50.0, 150.0, *edge.geos);
-        SD_COARSE_MATCH_LOG << "[LeftConstructionZoneCheck]  overlap_dis:" << overlap_dis;
-        if (overlap_dis > max_overlap_left && overlap_dis >= min_overlap_threshold) {
-          max_overlap_left = overlap_dis;
-          best_left_edge   = edge;
-        }
-      }
-      if (((edge.road_edeg_pos == BevRoadEdgePosition::BEV_REP__RIGHT) ||
-           ((edge.road_edeg_pos == BevRoadEdgePosition::BEV_REP__UNKNOWN) && (!edge.geos->empty()) && (edge.geos->front().y() < 0))) &&
-          edge.type != static_cast<uint32_t>(BoundaryType::FENCE_BOUNDARY)) {
-        double overlap_dis = calculateOverlapDisinRange(-50.0, 150.0, *edge.geos);
-        SD_COARSE_MATCH_LOG << "[LeftConstructionZoneCheck]  overlap_dis:" << overlap_dis;
-        if (overlap_dis > max_overlap_right && overlap_dis >= min_overlap_threshold) {
-          max_overlap_right = overlap_dis;
-          best_right_edge   = edge;
-        }
-      }
-      if (((edge.road_edeg_pos == BevRoadEdgePosition::BEV_REP__LEFT) ||
-           ((edge.road_edeg_pos == BevRoadEdgePosition::BEV_REP__UNKNOWN) && (!edge.geos->empty()) && (edge.geos->front().y() > 0))) &&
-          edge.type == static_cast<uint32_t>(BoundaryType::FENCE_BOUNDARY)) {
-        double overlap_dis = calculateOverlapDisinRange(-50.0, 150.0, *edge.geos);
-        SD_COARSE_MATCH_LOG << "[LeftConstructionZoneCheck]  overlap_dis:" << overlap_dis;
-        if (overlap_dis > max_cone_overlap && overlap_dis >= min_overlap_threshold) {
-          max_cone_overlap = overlap_dis;
-          best_cone_edge   = edge;
-        }
+  BevLaneMarker best_left_edge;
+  BevLaneMarker best_right_edge;
+  BevLaneMarker best_cone_edge;
+  double        max_overlap_left  = -1.0;
+  double        max_overlap_right = -1.0;
+  double        max_cone_overlap  = -1.0;
+  /* 左侧路沿 */
+  for (auto &edge : all_bev_edges) {
+    if (((edge.road_edeg_pos == BevRoadEdgePosition::BEV_REP__LEFT) ||
+         ((edge.road_edeg_pos == BevRoadEdgePosition::BEV_REP__UNKNOWN) && (!edge.geos->empty()) && (edge.geos->front().y() > 0))) &&
+        edge.type != static_cast<uint32_t>(BoundaryType::FENCE_BOUNDARY)) {
+      double overlap_dis = calculateOverlapDisinRange(-50.0, 150.0, *edge.geos);
+      HNOA_L3_LOG << "[LeftConstructionZoneCheck]  overlap_dis:" << overlap_dis;
+      if (overlap_dis > max_overlap_left && overlap_dis >= min_overlap_threshold) {
+        max_overlap_left = overlap_dis;
+        best_left_edge   = edge;
       }
     }
-    // 步骤2: 计算两条边界线的宽度
-    uint64_t best_lane_id = 0;
-    float    min_distance = std::numeric_limits<float>::max();
+    if (((edge.road_edeg_pos == BevRoadEdgePosition::BEV_REP__RIGHT) ||
+         ((edge.road_edeg_pos == BevRoadEdgePosition::BEV_REP__UNKNOWN) && (!edge.geos->empty()) && (edge.geos->front().y() < 0))) &&
+        edge.type != static_cast<uint32_t>(BoundaryType::FENCE_BOUNDARY)) {
+      double overlap_dis = calculateOverlapDisinRange(-50.0, 150.0, *edge.geos);
+      HNOA_L3_LOG << "[LeftConstructionZoneCheck]  overlap_dis:" << overlap_dis;
+      if (overlap_dis > max_overlap_right && overlap_dis >= min_overlap_threshold) {
+        max_overlap_right = overlap_dis;
+        best_right_edge   = edge;
+      }
+    }
+    if (((edge.road_edeg_pos == BevRoadEdgePosition::BEV_REP__LEFT) ||
+         ((edge.road_edeg_pos == BevRoadEdgePosition::BEV_REP__UNKNOWN) && (!edge.geos->empty()) && (edge.geos->front().y() > 0))) &&
+        edge.type == static_cast<uint32_t>(BoundaryType::FENCE_BOUNDARY)) {
+      double overlap_dis = calculateOverlapDisinRange(-50.0, 150.0, *edge.geos);
+      HNOA_L3_LOG << "[LeftConstructionZoneCheck]  overlap_dis:" << overlap_dis;
+      if (overlap_dis > max_cone_overlap && overlap_dis >= min_overlap_threshold) {
+        max_cone_overlap = overlap_dis;
+        best_cone_edge   = edge;
+      }
+    }
+  }
+  // 步骤2: 计算两条边界线的宽度
+  uint64_t best_lane_id = 0;
+  float    min_distance = std::numeric_limits<float>::max();
 
-    if ( 0 /*(!best_left_edge.geos->empty()) && (!best_cone_edge.geos->empty())*/) {
-      /* 判断左侧路沿距离锥筒是否在大于一个车道 */
-      double dis_to_rightbdry = CalculateCurvedLaneWidth2(*best_cone_edge.geos, *best_left_edge.geos);
-      SD_COARSE_MATCH_LOG << "[LeftConstructionZoneCheck] dis line " << best_cone_edge.id << " to " << best_left_edge.id
-                          << "  left bdry is : " << dis_to_rightbdry;
-      if (3 < dis_to_rightbdry && dis_to_rightbdry < 5.5) {
-        SD_COARSE_MATCH_LOG << " [LeftConstructionZoneCheck] check by left_edge & cone edge. ";
-        result = true;
-      }
-    }else if((!best_right_edge.geos->empty()) && (!best_cone_edge.geos->empty())){
-      /* 判断左侧锥筒和右侧路沿距离是否小于实际车道数*宽度 */
-      double road_width = CalculateCurvedLaneWidth2(*best_cone_edge.geos, *best_right_edge.geos);
-      SD_COARSE_MATCH_LOG << " [LeftConstructionZoneCheck] road_width: "<<road_width<<"lanetype_list.size()*3.5: "<<lanetype_list.size()*3.5;
-      if(lanetype_list.size()*3.5 > road_width){
-        SD_COARSE_MATCH_LOG << " [LeftConstructionZoneCheck] check by road_width. ";
-        result = true;
-      }
-    }else if(!best_cone_edge.geos->empty()){
-      /* 判断左侧存在锥筒路沿 */
-      SD_COARSE_MATCH_LOG << " [LeftConstructionZoneCheck] check only by left cone edge. ";
+  if (0 /*(!best_left_edge.geos->empty()) && (!best_cone_edge.geos->empty())*/) {
+    /* 判断左侧路沿距离锥筒是否在大于一个车道 */
+    double dis_to_rightbdry = CalculateCurvedLaneWidth2(*best_cone_edge.geos, *best_left_edge.geos);
+    HNOA_L3_LOG << "[LeftConstructionZoneCheck] dis line " << best_cone_edge.id << " to " << best_left_edge.id
+                << "  left bdry is : " << dis_to_rightbdry;
+    if (3 < dis_to_rightbdry && dis_to_rightbdry < 5.5) {
+      HNOA_L3_LOG << " [LeftConstructionZoneCheck] check by left_edge & cone edge. ";
       result = true;
     }
-SD_COARSE_MATCH_LOG << " [LeftConstructionZoneCheck] result: " << result;
-  
+  } else if ((!best_right_edge.geos->empty()) && (!best_cone_edge.geos->empty())) {
+    /* 判断左侧锥筒和右侧路沿距离是否小于实际车道数*宽度 */
+    double road_width = CalculateCurvedLaneWidth2(*best_cone_edge.geos, *best_right_edge.geos);
+    HNOA_L3_LOG << " [LeftConstructionZoneCheck] road_width: " << road_width << "lanetype_list.size()*3.5: " << lanetype_list.size() * 3.5;
+    if (lanetype_list.size() * 3.5 > road_width) {
+      HNOA_L3_LOG << " [LeftConstructionZoneCheck] check by road_width. ";
+      result = true;
+    }
+  } else if (!best_cone_edge.geos->empty()) {
+    /* 判断左侧存在锥筒路沿 */
+    HNOA_L3_LOG << " [LeftConstructionZoneCheck] check only by left cone edge. ";
+    result = true;
+  }
+  HNOA_L3_LOG << " [LeftConstructionZoneCheck] result: " << result;
 
-/* 5帧check，50帧keep */
-if (result) {
-  if (construction_zone_info_.pre_ConstructionZone) {
-    final_result = result;
-    construction_zone_info_.check_count++;
-    construction_zone_info_.keep_count = 0;
+  /* 5帧check，50帧keep */
+  if (result) {
+    if (construction_zone_info_.pre_ConstructionZone) {
+      final_result = result;
+      construction_zone_info_.check_count++;
+      construction_zone_info_.keep_count = 0;
+    } else {
+      final_result                        = result;
+      construction_zone_info_.check_count = 1;
+      construction_zone_info_.keep_count  = 0;
+    }
+
+  } else if (construction_zone_info_.check_count > 5 && !result && construction_zone_info_.pre_ConstructionZone) {
+    final_result = construction_zone_info_.pre_ConstructionZone;
+    construction_zone_info_.keep_count++;
+  } else if (!result && !construction_zone_info_.pre_ConstructionZone && construction_zone_info_.keep_count > 0) {
+    final_result = true;
+    construction_zone_info_.keep_count++;
+  } else if (!result && !construction_zone_info_.pre_ConstructionZone) {
+    /* 默认情况 */
+    construction_zone_info_.pre_final_ConstructionZone = false;
+    construction_zone_info_.pre_ConstructionZone       = false;
+    construction_zone_info_.check_count                = 0;
+    construction_zone_info_.keep_count                 = 0;
   } else {
-    final_result                        = result;
-    construction_zone_info_.check_count = 1;
-    construction_zone_info_.keep_count  = 0;
+  }
+  construction_zone_info_.pre_final_ConstructionZone = final_result;
+  construction_zone_info_.pre_ConstructionZone       = result;
+
+  /* 保持超过50帧，清空状态 */
+  if (construction_zone_info_.keep_count > 100)  // 50-> 100
+  {
+    construction_zone_info_.pre_final_ConstructionZone = false;
+    construction_zone_info_.pre_ConstructionZone       = false;
+    construction_zone_info_.check_count                = 0;
+    construction_zone_info_.keep_count                 = 0;
   }
 
-} else if (construction_zone_info_.check_count > 5 && !result && construction_zone_info_.pre_ConstructionZone) {
-  final_result = construction_zone_info_.pre_ConstructionZone;
-  construction_zone_info_.keep_count++;
-}else if (!result && !construction_zone_info_.pre_ConstructionZone && construction_zone_info_.keep_count > 0) {
-  final_result = true;
-  construction_zone_info_.keep_count++;
-} else if (!result && !construction_zone_info_.pre_ConstructionZone) {
-  /* 默认情况 */
-  construction_zone_info_.pre_final_ConstructionZone = false;
-  construction_zone_info_.pre_ConstructionZone = false;
-  construction_zone_info_.check_count          = 0;
-  construction_zone_info_.keep_count           = 0;
-} else {
-}
- construction_zone_info_.pre_final_ConstructionZone = final_result;
- construction_zone_info_.pre_ConstructionZone = result;
-
-
- /* 保持超过50帧，清空状态 */
- if (construction_zone_info_.keep_count > 100) // 50-> 100
- {
-  construction_zone_info_.pre_final_ConstructionZone = false;
-  construction_zone_info_.pre_ConstructionZone = false;
-  construction_zone_info_.check_count = 0;
-  construction_zone_info_.keep_count = 0;
- }
-
- SD_COARSE_MATCH_LOG << " [LeftConstructionZoneCheck] final_result: " << final_result
-                     << " pre_final_result: " << construction_zone_info_.pre_final_ConstructionZone << " result " << result
-                     << " pre_result " << construction_zone_info_.pre_ConstructionZone << " check_count "
-                     << construction_zone_info_.check_count << " keep_count " << construction_zone_info_.keep_count;
- return final_result;
+  HNOA_L3_LOG << " [LeftConstructionZoneCheck] final_result: " << final_result
+              << " pre_final_result: " << construction_zone_info_.pre_final_ConstructionZone << " result " << result << " pre_result "
+              << construction_zone_info_.pre_ConstructionZone << " check_count " << construction_zone_info_.check_count << " keep_count "
+              << construction_zone_info_.keep_count;
+  return final_result;
 }
 
 /*
@@ -7554,33 +7476,33 @@ std::vector<uint64_t> SdNavigationHighway::FilterDecLane(const std::shared_ptr<R
                                                          BevMapInfoPtr &GlobalBevMapOutPut) {
   // 判断road_selected是否为空，空则返回
   if (road_selected.empty()) {
-    SD_COARSE_MATCH_LOG << "[FilterDecLane]  road_selected is empty! ";
+    HNOA_L3_LOG << "[FilterDecLane]  road_selected is empty! ";
     return road_selected;
   }
   auto                 &all_bev_edges = raw_bev_map->edges;
   std::vector<uint64_t> dec_lane_filtered(road_selected);
   std::vector<uint64_t> dec_indices_id_to_remove;
-  SD_COARSE_MATCH_LOG << "Entering FilterDecLane  with inputs: " << fmt::format(" [{}]  ", fmt::join(road_selected, ", "))
-                      << " size: " << road_selected.size();
+  HNOA_L3_LOG << "Entering FilterDecLane  with inputs: " << fmt::format(" [{}]  ", fmt::join(road_selected, ", "))
+              << " size: " << road_selected.size();
 
-  bool has_junction_app_ramp = false; /* [0,300m]的最近路口为途径下匝道 */
-  bool is_ramp_lane          = false; /*  最右车道是下匝道的bev车道 */
-  const JunctionInfo *junction_info_ptr = nullptr;
+  bool                has_junction_app_ramp = false; /* [0,300m]的最近路口为途径下匝道 */
+  bool                is_ramp_lane          = false; /*  最右车道是下匝道的bev车道 */
+  const JunctionInfo *junction_info_ptr;
   for (auto &sd_junction_tmp : sd_junction_infos_) {
-    SD_COARSE_MATCH_LOG << "[SDNOA Junction] ,id : " << sd_junction_tmp.junction_id
-                        << " ,type: " << StrNaviJunctionHighway(static_cast<int>(sd_junction_tmp.junction_type))
-                        << " ,offset:  " << sd_junction_tmp.offset << "  ,main_road_lane_nums: " << sd_junction_tmp.main_road_lane_nums
-                        << " ,direction: " << StrNaviSplitDirectionHighway(sd_junction_tmp.split_direction)
-                        << " ,target_road_lane_nums: " << sd_junction_tmp.target_road_lane_nums
-                        << " ,passed_flag: " << (int)sd_junction_tmp.has_passed_flag
-                        << " ,effected_flag: " << (int)sd_junction_tmp.has_effected_flag;
+    HNOA_L3_LOG << "[SDNOA Junction] ,id : " << sd_junction_tmp.junction_id
+                << " ,type: " << StrNaviJunctionHighway(static_cast<int>(sd_junction_tmp.junction_type))
+                << " ,offset:  " << sd_junction_tmp.offset << "  ,main_road_lane_nums: " << sd_junction_tmp.main_road_lane_nums
+                << " ,direction: " << StrNaviSplitDirectionHighway(sd_junction_tmp.split_direction)
+                << " ,target_road_lane_nums: " << sd_junction_tmp.target_road_lane_nums
+                << " ,passed_flag: " << (int)sd_junction_tmp.has_passed_flag
+                << " ,effected_flag: " << (int)sd_junction_tmp.has_effected_flag;
   }
 
   for (auto &sd_junction : sd_junction_infos_) {
     if (!sd_junction.has_passed_flag && sd_junction.offset < 200 && sd_junction.offset > -30 &&
         sd_junction.junction_type == JunctionType::ApproachRampInto) {
       has_junction_app_ramp = true;
-      junction_info_ptr = &sd_junction;
+      junction_info_ptr     = &sd_junction;
       break;
     }
   }
@@ -7594,30 +7516,28 @@ std::vector<uint64_t> SdNavigationHighway::FilterDecLane(const std::shared_ptr<R
       }
     }
   }
-
-  std::vector<std::vector<uint64_t>> non_navi_ids;
-  if (junction_info_ptr) {
-    non_navi_ids = topology_extractor_.ExtractNonNaviLanesFromJunction(junction_info_ptr);
-
-    SD_COARSE_MATCH_LOG << fmt::format("[ExtractNonNaviLanesFromJunction] Result: [");
-    for (size_t i = 0; i < non_navi_ids.size(); ++i) {
-      SD_COARSE_MATCH_LOG << fmt::format("  [{}]", fmt::join(non_navi_ids[i], ", "));
-      if (i < non_navi_ids.size() - 1) {
-        SD_COARSE_MATCH_LOG << ",";
-      }
-    }
-    SD_COARSE_MATCH_LOG << fmt::format("]");
-  } else {
-    SD_MERGE_LOG << "[ExtractNonNaviLanesFromJunction] junction_info_ptr is null";
+  if (!junction_info_ptr) {
+    HNOA_L3_LOG << "[ExtractNonNaviLanesFromJunction] junction_info_ptr is null";
   }
+  std::vector<std::vector<uint64_t>> non_navi_ids = topology_extractor_.ExtractNonNaviLanesFromJunction(junction_info_ptr);
 
-  SD_COARSE_MATCH_LOG << "  [FilterDecLane] dec lane info: "<< " has_junction_app_ramp: " << has_junction_app_ramp<<" firstRange.start: " << firstRange.first
-                      << " firstRange.end:  " << firstRange.second;
+  HNOA_L3_LOG << fmt::format("[ExtractNonNaviLanesFromJunction] Result: [");
+  for (size_t i = 0; i < non_navi_ids.size(); ++i) {
+    HNOA_L3_LOG << fmt::format("  [{}]", fmt::join(non_navi_ids[i], ", "));
+    if (i < non_navi_ids.size() - 1) {
+      HNOA_L3_LOG << ",";
+    }
+  }
+  HNOA_L3_LOG << fmt::format("]");
+
+  HNOA_L3_LOG << "  [FilterDecLane] dec lane info: "
+              << " has_junction_app_ramp: " << has_junction_app_ramp << " firstRange.start: " << firstRange.first
+              << " firstRange.end:  " << firstRange.second;
 
   /* 减速车道80m前或者路口200m前 */
   if (has_junction_app_ramp) {
     /* 判断最右车道 */
-    if(dec_lane_filtered.size() > 1){
+    if (dec_lane_filtered.size() > 1) {
       dec_indices_id_to_remove.push_back(dec_lane_filtered.back());
     }
   }
@@ -7625,19 +7545,6 @@ std::vector<uint64_t> SdNavigationHighway::FilterDecLane(const std::shared_ptr<R
   if (!dec_indices_id_to_remove.empty()) {
     /* 判断最右车道是否是下匝道的车道 */
     auto &ld_match_infos = INTERNAL_PARAMS.ld_match_info_data.GetMatchInfo();
-
-    // 打印完整的ld_match_infos信息
-    SD_COARSE_MATCH_LOG << "[FilterDecLane] ld_match_infos size: " << ld_match_infos.size();
-    for (const auto &[bev_id, matched_ld_ids] : ld_match_infos) {
-      SD_COARSE_MATCH_LOG << "[FilterDecLane] bev_id: " << bev_id << " matched_ld_ids: [";
-      for (size_t i = 0; i < matched_ld_ids.size(); ++i) {
-        SD_COARSE_MATCH_LOG << matched_ld_ids[i];
-        if (i < matched_ld_ids.size() - 1) {
-          SD_COARSE_MATCH_LOG << ", ";
-        }
-      }
-      SD_COARSE_MATCH_LOG << "]";
-    }
 
     uint64_t bev_id = dec_indices_id_to_remove.front();
 
@@ -7647,16 +7554,15 @@ std::vector<uint64_t> SdNavigationHighway::FilterDecLane(const std::shared_ptr<R
       for (auto &vec : non_navi_ids) {
         for (auto &element : vec) {
           if (std::find(matched_ld_ids.begin(), matched_ld_ids.end(), element) != matched_ld_ids.end()) {
-            SD_COARSE_MATCH_LOG << "  [FilterDecLane] dec lane is matched, bev_id: " << bev_id << " map_id: " << element;
+            HNOA_L3_LOG << "  [FilterDecLane] dec lane is matched, bev_id: " << bev_id << " map_id: " << element;
             is_ramp_lane = true;
           } else {
-            
           }
         }
       }
     } else {
       // 处理键不存在的情况（记录错误/跳过）
-      SD_COARSE_MATCH_LOG << "  [FilterDecLane] bev_id " << bev_id << " not found in ld_match_infos!";
+      HNOA_L3_LOG << "  [FilterDecLane] bev_id " << bev_id << " not found in ld_match_infos!";
     }
   }
 
@@ -7665,15 +7571,15 @@ std::vector<uint64_t> SdNavigationHighway::FilterDecLane(const std::shared_ptr<R
     for (uint64_t id : dec_indices_id_to_remove) {
       dec_lane_filtered.erase(std::remove(dec_lane_filtered.begin(), dec_lane_filtered.end(), id), dec_lane_filtered.end());
     }
-    SD_COARSE_MATCH_LOG << "[FilterDecLane]erase the back ramp/dec lane  ";
+    HNOA_L3_LOG << "[FilterDecLane]erase the back ramp/dec lane  ";
   } else {
-
+    /* null */
   }
 
-  SD_COARSE_MATCH_LOG << "[FilterDecLane]indices_id_to_remove: " << fmt::format(" [{}]  ", fmt::join(dec_indices_id_to_remove, ", "));
+  HNOA_L3_LOG << "[FilterDecLane]indices_id_to_remove: " << fmt::format(" [{}]  ", fmt::join(dec_indices_id_to_remove, ", "));
 
-  SD_COARSE_MATCH_LOG << "[FilterDecLane] dec_lane_filtered result: " << fmt::format(" [{}]  ", fmt::join(dec_lane_filtered, ", "))
-                      << " size: " << dec_lane_filtered.size();
+  HNOA_L3_LOG << "[FilterDecLane] dec_lane_filtered result: " << fmt::format(" [{}]  ", fmt::join(dec_lane_filtered, ", "))
+              << " size: " << dec_lane_filtered.size();
   return dec_lane_filtered;
 }
 

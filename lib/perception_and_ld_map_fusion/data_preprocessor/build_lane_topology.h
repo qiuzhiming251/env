@@ -139,13 +139,15 @@ public:
     void BuildNewMergeSplitTopo(
         BevMapInfoPtr local_map,
         std::shared_ptr<cem::message::env_model::RoutingMap> ld_map,
-        const bev_map_ids_info & bev_map_ids);
+        const bev_map_ids_info & bev_map_ids,
+        std::string& debug_infos);
 
     //自车道逐渐变窄消失构建merge拓扑到相邻车道
     void BuildMergeTopo(
         BevMapInfoPtr local_map,
         std::shared_ptr<cem::message::env_model::RoutingMap> ld_map,
-        const bev_map_ids_info & bev_map_ids);
+        const bev_map_ids_info & bev_map_ids,
+        std::string& debug_infos);
     // 创建SPLIT拓扑
     void BuildSplitTopo(BevMapInfoPtr local_map, std::shared_ptr<cem::message::env_model::RoutingMap> ld_map);
 
@@ -153,13 +155,14 @@ public:
     void BuildSplitTopoWithLdMap(
         BevMapInfoPtr local_map,
         std::shared_ptr<cem::message::env_model::RoutingMap> ld_map,
-        const bev_map_ids_info & bev_map_ids);
+        const bev_map_ids_info & bev_map_ids,
+        std::string& debug_infos);
 
     //校验感知Merge拓扑
-    void CheckMergeTopo(BevMapInfoPtr &bevMapPtr,RoutingMapPtr &routingMapPtr,std::unordered_map<uint64_t, std::vector<uint64_t>>& bev_ld_match);
+    void CheckMergeTopo(BevMapInfoPtr &bevMapPtr,RoutingMapPtr &routingMapPtr,std::unordered_map<uint64_t, std::vector<uint64_t>>& bev_ld_match, std::string& debug_infos);
 
     //校验感知Split拓扑
-    void CheckSplitTopo(BevMapInfoPtr &bevMapPtr,RoutingMapPtr &routingMapPtr, const bev_map_ids_info &bev_map_ids);
+    void CheckSplitTopo(BevMapInfoPtr &bevMapPtr,RoutingMapPtr &routingMapPtr, const bev_map_ids_info &bev_map_ids, std::string& debug_infos);
 
     //校验感知、地图匹配是否正确
     bool CheckMatchRes(BevMapInfoPtr &bevMapPtr,RoutingMapPtr &routingMapPtr,std::unordered_map<uint64_t, std::vector<uint64_t>>& bev_ld_match);

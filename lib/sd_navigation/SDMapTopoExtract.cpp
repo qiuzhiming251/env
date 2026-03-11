@@ -79,7 +79,7 @@ bool SDMapTopologyExtractor::IsInLowPrecisionZone(const double merge_dist) {
     }
     return ret;
 }
-void SDMapTopologyExtractor::SetBevLaneMergeTopoNew(const RoutingMapPtr routing_map_ptr, BevMapInfo &bevMap) {
+void SDMapTopologyExtractor::SetBevLaneMergeTopoNew(std::unique_ptr<FusionManager> &fusion_manager, BevMapInfo &bevMap, std::vector<MergeDetail> &merge_details) {
     
     std::unordered_set<uint64_t> alive_bev_ids;
     std::optional<Eigen::Isometry3d> T_local_ego_cur = GetTransform(bevMap.header.timestamp);
@@ -101,20 +101,24 @@ void SDMapTopologyExtractor::SetBevLaneMergeTopoNew(const RoutingMapPtr routing_
         ++it;
     }
 
-    auto bev_matched_merge_infos = INTERNAL_PARAMS.geos_match_merge_data.GetMatchMergeInfo();
-    CheckBevMergeTopo(routing_map_ptr, bevMap, bev_matched_merge_infos);
-    for(auto &bev_lane : bevMap.lane_infos) {
-          if(!bev_lane.geos || bev_lane.geos->size() < 3 || bev_lane.merge_topo_extend != MergeTopoExtendType::TOPOLOGY_MERGE_NONE || !bev_lane.next_lane_ids.empty()) {
-             continue;
-          }
-          if(bev_matched_merge_infos.find(bev_lane.id) != bev_matched_merge_infos.end()) {
-                    auto ld_merge = bev_matched_merge_infos.at(bev_lane.id);
-                    if(ld_merge.distance_to_ego > 0 && !IsInLowPrecisionZone(ld_merge.distance_to_ego) && (ld_merge.type == 1 || ld_merge.type == 2)) {
+    if(fusion_manager) {
+        std::set<uint64_t> matched_bev_id_sets;
+        auto& lane_match_res = fusion_manager->GetMatchers();
+        for(auto& lane_match_pair : lane_match_res) {
+            matched_bev_id_sets.insert(lane_match_pair.bev_id);
+        }
+        for(auto &bev_lane : bevMap.lane_infos) {
+                if(!bev_lane.geos || bev_lane.geos->size() < 3) {
+                  continue;
+                }
+                auto ld_merge = fusion_manager->GetFarMergeInfo(bev_lane.id, 0, 500);
+                if(!ld_merge.empty()) {
+                    if(ld_merge[0]->distance_to_ego > 0 && !IsInLowPrecisionZone(ld_merge[0]->distance_to_ego) && (ld_merge[0]->type == 1 || ld_merge[0]->type == 2)) {
                         MergeTrack merge_tmp;
-                        merge_tmp.stable = (ld_merge.type == 1)? MergeTopoExtendType::TOPOLOGY_MERGE_LEFT : MergeTopoExtendType::TOPOLOGY_MERGE_RIGHT;
+                        merge_tmp.stable = (ld_merge[0]->type == 1)? MergeTopoExtendType::TOPOLOGY_MERGE_LEFT : MergeTopoExtendType::TOPOLOGY_MERGE_RIGHT;
                         if(bev_merge_trackers_.find(bev_lane.id) == bev_merge_trackers_.end()) {
                           merge_tmp.hits = 1;
-                          merge_tmp.last_dist = ld_merge.distance_to_ego;
+                          merge_tmp.last_dist = ld_merge[0]->distance_to_ego;
                           merge_tmp.last_T_ego = T_local_ego_cur.value();
                           for(auto& pt : *bev_lane.geos)
                               merge_tmp.last_geos->push_back(pt);
@@ -122,7 +126,7 @@ void SDMapTopologyExtractor::SetBevLaneMergeTopoNew(const RoutingMapPtr routing_
                         }
                         else if(merge_tmp.stable == bev_merge_trackers_[bev_lane.id].stable) {
                           bev_merge_trackers_[bev_lane.id].hits += 1 ;
-                          bev_merge_trackers_[bev_lane.id].last_dist = ld_merge.distance_to_ego;
+                          bev_merge_trackers_[bev_lane.id].last_dist = ld_merge[0]->distance_to_ego;
                           bev_merge_trackers_[bev_lane.id].last_T_ego = T_local_ego_cur.value();
                           for(auto& pt : *bev_lane.geos)
                               bev_merge_trackers_[bev_lane.id].last_geos->push_back(pt);
@@ -132,8 +136,8 @@ void SDMapTopologyExtractor::SetBevLaneMergeTopoNew(const RoutingMapPtr routing_
                         bev_lane.merge_info_extend.merge_source = MergeSourceExtend::MERGE_LD;
                         bev_lane.merge_info_extend.dis_to_merge = bev_merge_trackers_[bev_lane.id].last_dist;
                     }
-          }
-          else {
+                }
+                else {
                       //感知lane未匹配,Merge匹配超过10帧，一直保持
                       if(bev_merge_trackers_.find(bev_lane.id) != bev_merge_trackers_.end() && bev_merge_trackers_[bev_lane.id].hits >= 10 && bev_merge_trackers_[bev_lane.id].last_dist > 0) {
                          double dist =  LaneGeometry::GetDistanceBetweenLines(*bev_merge_trackers_[bev_lane.id].last_geos, *bev_lane.geos);
@@ -157,55 +161,9 @@ void SDMapTopologyExtractor::SetBevLaneMergeTopoNew(const RoutingMapPtr routing_
                         bev_lane.merge_info_extend.merge_source = MergeSourceExtend::MERGE_UNKNOWN;
                         bev_lane.merge_info_extend.dis_to_merge = 0.0;
                     }
-          }
-          if(bev_lane.merge_topo_extend != MergeTopoExtendType::TOPOLOGY_MERGE_NONE && (bev_lane.merge_info_extend.dis_to_merge < 0.0 || bev_lane.merge_info_extend.dis_to_merge > 500.0)) {
-              bev_lane.merge_info_extend.merge_valid  = 0;
-              bev_lane.merge_topo_extend = MergeTopoExtendType::TOPOLOGY_MERGE_NONE;
-              bev_lane.merge_info_extend.merge_source = MergeSourceExtend::MERGE_UNKNOWN;
-              bev_lane.merge_info_extend.dis_to_merge = 0.0;
-          }
-    }
-}
-void SDMapTopologyExtractor::CheckBevMergeTopo(const RoutingMapPtr routing_map_ptr, BevMapInfo &bevMap, std::map<uint64_t, MergeTopoInfo>& bev_matched_merge_infos) {
-    if(!routing_map_ptr) {
-       return;
-    }
-    auto& match_infos = INTERNAL_PARAMS.ld_match_info_data.GetMatchInfo();
-    std::map<uint64_t, LaneInfo*> ld_lanes_map;
-	  std::map<uint64_t, BevLaneInfo*> bev_lanes_map;
-    for(auto& ld_lane : routing_map_ptr->lanes) {
-	     ld_lanes_map.insert({ld_lane.id, &ld_lane});
-	  }
-	  for(auto& bev_lane : bevMap.lane_infos) {
-	     bev_lanes_map.insert({bev_lane.id, &bev_lane});
-	  }
-    for(auto it = bev_matched_merge_infos.begin(); it != bev_matched_merge_infos.end();) {
-       if(bev_lanes_map.find(it->first) != bev_lanes_map.end() && bev_lanes_map[it->first]->position == static_cast<uint32_t>(BevLanePosition::LANE_LOC_EGO)) {
-          bool match_valid = true;
-           for(auto ld_id : match_infos.at(it->first)) {
-		           if(ld_lanes_map.find(ld_id) != ld_lanes_map.end() && (ld_lanes_map[ld_id]->type == cem::message::env_model::LaneType::LANE_HARBOR_STOP || 
-                  ld_lanes_map[ld_id]->type == cem::message::env_model::LaneType::LANE_BUS_NORMAL)) {
-                   match_valid = false;
-               }
-		       }
-           if(!match_valid) {
-               it = bev_matched_merge_infos.erase(it);
-              //  AINFO<<"erase ego lane merge:"<<it->first;
-           }
-           else{
-               ++it;
-           }
-       }
-       else if(bev_lanes_map.find(it->first) != bev_lanes_map.end() && bev_lanes_map[it->first]->previous_lane_ids.size() == 2 && (
-               bev_lanes_map.find(bev_lanes_map[it->first]->previous_lane_ids[0]) != bev_lanes_map.end() || 
-               bev_lanes_map.find(bev_lanes_map[it->first]->previous_lane_ids[1]) != bev_lanes_map.end())) {
-               it = bev_matched_merge_infos.erase(it);
-              //  AINFO<<"erase merge main lane merge:"<<it->first;
-       }
-       else {
-          ++it;
-       }
-    }
+                }
+        }
+  }
 }
 std::optional<Eigen::Isometry3d> SDMapTopologyExtractor::GetTransform(const double& timestamp) {
   LocalizationPtr odom_ptr{nullptr};

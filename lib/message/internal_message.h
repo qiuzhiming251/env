@@ -16,19 +16,20 @@
 #include "message/env_model/traffic_road/road_edge.h"
 
 // sensor message
+#include "message/env_model/routing_map/map_event.h"
+#include "message/env_model/routing_map/routing_map.h"
+#include "message/sensor/camera/bev_lane/bev_lane.h"
+#include "message/sensor/camera/bev_lane/e2e_map.h"
 #include "message/sensor/localization/localization_data.h"
-#include "message/sensor/vehicle/vehicle_signal.h"
+#include "message/sensor/vehicle/adas_ipd100ms_pdu12.h"
+#include "message/sensor/vehicle/ap_ipd100ms_pud12.h"
 #include "message/sensor/vehicle/bcm50ms_pdu02.h"
+#include "message/sensor/vehicle/eps010ms_pdu00.h"
 #include "message/sensor/vehicle/ibs20ms_pdu08.h"
 #include "message/sensor/vehicle/ibs20ms_pdu15.h"
-#include "message/sensor/vehicle/sas10ms_pdu00.h"
-#include "message/sensor/vehicle/adas_ipd100ms_pdu12.h"
-#include "message/sensor/vehicle/imcu20ms_pdu05.h"
 #include "message/sensor/vehicle/icm100ms_pdu29.h"
-#include "message/sensor/vehicle/ap_ipd100ms_pud12.h"
-#include "message/sensor/vehicle/eps010ms_pdu00.h"
+#include "message/sensor/vehicle/imcu20ms_pdu05.h"
 #include "message/sensor/vehicle/mpd100ms_pdu04.h"
-#include "message/sensor/vision/tsrmobject.h"
 #include "message/sensor/camera/bev_lane/bev_lane.h"
 #include "message/sensor/vision/radar_vision_obstacles.h"
 #include "message/sensor/localization/map_match.h"
@@ -39,8 +40,14 @@
 #include "message/env_model/pnc/plan_func_state.h"
 #include "message/env_model/pnc/canout.h"
 #include "message/env_model/occ/occ.h"
+#include "modules/msg/orin_msgs/e2e_map.pb.h"
+#include "message/sensor/vehicle/sas10ms_pdu00.h"
+#include "message/sensor/vehicle/vehicle_signal.h"
 #include "modules/msg/drivers_msgs/sdmap_inform_service.pb.h"
+#include "modules/msg/perception_msgs/e2e_traffic_info.pb.h"
 #include "modules/msg/localization_msgs/map_match.pb.h"
+#include "message/state/top_state.h"
+
 #include "message/env_model/speed_limit/navi_traf.h"
 #include "message/env_model/speed_limit/drivers_event.h"
 
@@ -95,15 +102,21 @@ typedef std::shared_ptr<TrafficLightsE2EInfo> TrafficLightsE2EInfoPtr;
 typedef std::shared_ptr<const TrafficLightsE2EInfo> TrafficLightsE2EInfoConstPtr;
 typedef std::shared_ptr<LidarRoadEdgeInfo> LidarRoadEdgeInfoPtr;
 typedef std::shared_ptr<const LidarRoadEdgeInfo> LidarRoadEdgeInfoConstPtr;
+typedef std::shared_ptr<E2eMap> E2eMapPtr;
+typedef std::shared_ptr<const E2eMap> E2eMapConstPtr;
+typedef std::shared_ptr<TopState> TopStatePtr;
+typedef std::shared_ptr<const TopState> TopStateConstPtr;
+
+using E2EMapRawPtr = std::shared_ptr<byd::msg::orin::e2e_map::E2EMap>;
 typedef std::shared_ptr<PLanningResultData> PLanningResultPtr;
 typedef std::shared_ptr<PLanFuncState> PlanFuncStatePtr;
 typedef std::shared_ptr<CAN1> CAN1Ptr;
 typedef std::shared_ptr<const CAN1> CAN1ConstPtr;
 typedef std::shared_ptr<OCCInfo> OCCInfoPtr;
 typedef std::shared_ptr<const OCCInfo> OCCInfoConstPtr;
-typedef std::shared_ptr<byd::msg::drivers::sdTrafficLight> SdTrafficLightPtr;
+typedef std::shared_ptr<byd::msg::drivers::sdTrafficLight> SDTrafficLightPtr;
+using E2EResultRawPtr = std::shared_ptr<byd::msg::perception::E2ETrafficResult>;
 typedef std::shared_ptr<byd::modules::localization::MapMatchResult>  MapMatchResultPtr;
-typedef std::shared_ptr<cem::message::sensor::MapMatchResultBaidu> MapMatchResultBaiduPtr;
 typedef std::shared_ptr<VisionTrfInfo> VisionTrfInfoPtr;
 typedef std::shared_ptr<const VisionTrfInfo> VisionTrfInfoConstPtr;
 typedef std::shared_ptr<NaviTrafficInfo> NaviTrafficInfoPtr;

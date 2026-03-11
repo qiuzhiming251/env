@@ -42,9 +42,9 @@ std::vector<uint64_t> CoarseMatching::CoarseMatchingType2(const std::vector<Junc
   int  mapLaneNum    = CoarseMatching::GetCurrentLaneNum();
   int  bevLaneNum    = bev_processor_.CountLanesPassedZero();
   SD_COARSE_MATCH_TYPE2_LOG << fmt::format("[CoarseMatchingType2] mapLaneNum: {}, bevLaneNum: {}", mapLaneNum, bevLaneNum);
-  auto &navi_debug_infos                   = INTERNAL_PARAMS.navigation_info_data.navi_debug_infos();
-  navi_debug_infos.bevLaneNum              = bevLaneNum;
-  navi_debug_infos.mapLaneNum              = mapLaneNum;
+  auto &navi_debug_infos      = INTERNAL_PARAMS.navigation_info_data.navi_debug_infos();
+  navi_debug_infos.bevLaneNum = bevLaneNum;
+  navi_debug_infos.mapLaneNum = mapLaneNum;
   navi_debug_infos.isSplitRoadSelectWorked = isSplitRoadSelectWorked;
   // Find the matching current section based on road_selected lane_ids
   const BevSectionInfo *current_sec = nullptr;
@@ -84,9 +84,7 @@ std::vector<uint64_t> CoarseMatching::CoarseMatchingType2(const std::vector<Junc
     std::pair<int, int> lane_counts             = GetReachableLaneCountToRamp(junction);
     int                 last_lg_reachable_count = lane_counts.first;
     int                 ego_reachable_count     = lane_counts.second;
-    int                 max_map_count           = GetMaxNormalLaneCountToJunction(junction);
     int                 recommended_lane_count  = 0;
-    SD_COARSE_MATCH_TYPE2_LOG << "Max normal lane count from ego to target junction: " << max_map_count;
 
     if (junction.offset > 100.0) {
       recommended_lane_count = ego_reachable_count;
@@ -147,30 +145,14 @@ std::vector<uint64_t> CoarseMatching::CoarseMatchingType2(const std::vector<Junc
       //       "[CoarseMatchingType2] Because right_already_exclusived is:{}, Update recommended_lane_count to: {}", right_already_exclusived,
       //       recommended_lane_count);
       // }
-      std::vector<uint64_t> filtered_road_selected = road_selected;
-      if (road_selected.size() > max_map_count && !road_selected.empty()) {
-        uint64_t rightmost_lane_id = road_selected.back();
-        auto     lane_info         = INTERNAL_PARAMS.raw_bev_data.GetLaneInfoById(rightmost_lane_id);
-        if (lane_info && !lane_info->geos->empty()) {
-          double lane_start_x = lane_info->geos->front().x();
-          SD_COARSE_MATCH_TYPE2_LOG << fmt::format("[CoarseMatchingType2] Rightmost lane {} start x: {:.2f}, max_map_count: {}",
-                                                   rightmost_lane_id, lane_start_x, max_map_count);
-          if (lane_start_x > 0.0) {
-            // Remove the rightmost lane as it starts too far ahead (likely misdetection)
-            filtered_road_selected.pop_back();
-            SD_COARSE_MATCH_TYPE2_LOG << "[CoarseMatchingType2] Removed rightmost lane due to start x > 20.0";
-          }
-        }
-      }
-
       if (recommended_lane_count == 1 && mapLaneNum != 0) {
-        apply_gradual_strategy(junction, filtered_road_selected, mapLaneNum, is_right_turn, guide_lanes);
+        apply_gradual_strategy(junction, road_selected, mapLaneNum, is_right_turn, guide_lanes);
       } else if (recommended_lane_count > 1) {
         int lanes_to_select = std::min(recommended_lane_count, static_cast<int>(road_selected.size()));
-        guide_lanes         = std::vector<uint64_t>(filtered_road_selected.end() - lanes_to_select, filtered_road_selected.end());
+        guide_lanes         = std::vector<uint64_t>(road_selected.end() - lanes_to_select, road_selected.end());
       } else {
-        guide_lanes = {filtered_road_selected.back()};  // 默认选择最右侧车道
-        apply_gradual_strategy(junction, filtered_road_selected, mapLaneNum, is_right_turn, guide_lanes);
+        guide_lanes = {road_selected.back()};  // 默认选择最右侧车道
+        apply_gradual_strategy(junction, road_selected, mapLaneNum, is_right_turn, guide_lanes);
       }
     } else if (junction.split_merge_direction == DirectionSplitMerge::Straight) {
       SD_COARSE_MATCH_TYPE2_LOG << "[CoarseMatchingType2]DirectionSplitMerge::Straight.";
@@ -747,118 +729,6 @@ void CoarseMatching::apply_gradual_strategy(const JunctionInfoCity &junction, co
   } else {
     guide_lanes = SelectSingleSideLanes(road_selected_in, junction);
   }
-}
-
-int CoarseMatching::GetMaxNormalLaneCountToJunction(const JunctionInfoCity &junction) {
-  uint64_t    ego_lg_id = topology_extractor_.GetCurrentLaneGroupId();
-  const auto *ego_lg    = INTERNAL_PARAMS.sd_map_data.GetSDLaneGroupInfoById(ego_lg_id);
-  if (!ego_lg) {
-    SD_COARSE_MATCH_TYPE2_LOG << "Cannot find ego lane group: " << ego_lg_id;
-    return 0;
-  }
-
-  if (junction.junction_ids.empty()) {
-    SD_COARSE_MATCH_TYPE2_LOG << "junction.junction_ids empty, cannot determine max lane count.";
-    return 0;
-  }
-
-  uint64_t current_junction_id = junction.junction_ids.front();
-  auto     target_section      = INTERNAL_PARAMS.sd_map_data.GetSDSectionInfoById(current_junction_id);
-  if (!target_section) {
-    SD_COARSE_MATCH_TYPE2_LOG << "Cannot find section for target junction id: " << current_junction_id;
-    return 0;
-  }
-
-  std::queue<uint64_t>                 lg_queue;
-  std::unordered_set<uint64_t>         visited_lgs;
-  std::vector<const SDLaneGroupInfo *> path_lgs;
-
-  lg_queue.push(ego_lg_id);
-  visited_lgs.insert(ego_lg_id);
-  path_lgs.push_back(ego_lg);
-
-  uint64_t target_last_lg_id = 0;
-  if (!target_section->lane_group_idx.empty()) {
-    target_last_lg_id = target_section->lane_group_idx.back().id;
-  }
-
-  bool target_last_reached = false;
-  while (!lg_queue.empty() && !target_last_reached) {
-    uint64_t current_lg_id = lg_queue.front();
-    lg_queue.pop();
-
-    const SDLaneGroupInfo *current_lg = INTERNAL_PARAMS.sd_map_data.GetSDLaneGroupInfoById(current_lg_id);
-    if (!current_lg)
-      continue;
-
-    if (std::find(path_lgs.begin(), path_lgs.end(), current_lg) == path_lgs.end()) {
-      path_lgs.push_back(current_lg);
-    }
-
-    if (current_lg_id == target_last_lg_id) {
-      target_last_reached = true;
-      break;
-    }
-
-    for (uint64_t succ_lg_id : current_lg->successor_lane_group_ids) {
-      if (visited_lgs.count(succ_lg_id) == 0) {
-        const auto *succ_lg = INTERNAL_PARAMS.sd_map_data.GetSDLaneGroupInfoById(succ_lg_id);
-        if (succ_lg) {
-          lg_queue.push(succ_lg_id);
-          visited_lgs.insert(succ_lg_id);
-        }
-      }
-    }
-  }
-
-  if (!target_last_reached) {
-    std::queue<uint64_t>         remaining_lg_queue;
-    std::unordered_set<uint64_t> remaining_visited_lgs;
-    for (const auto &lg : path_lgs) {
-      remaining_lg_queue.push(lg->id);
-      remaining_visited_lgs.insert(lg->id);
-    }
-
-    while (!remaining_lg_queue.empty()) {
-      uint64_t current_lg_id = remaining_lg_queue.front();
-      remaining_lg_queue.pop();
-
-      const SDLaneGroupInfo *current_lg = INTERNAL_PARAMS.sd_map_data.GetSDLaneGroupInfoById(current_lg_id);
-      if (!current_lg)
-        continue;
-
-      for (uint64_t succ_lg_id : current_lg->successor_lane_group_ids) {
-        if (remaining_visited_lgs.count(succ_lg_id) == 0) {
-          const auto *succ_lg = INTERNAL_PARAMS.sd_map_data.GetSDLaneGroupInfoById(succ_lg_id);
-          if (succ_lg) {
-            remaining_lg_queue.push(succ_lg_id);
-            remaining_visited_lgs.insert(succ_lg_id);
-            path_lgs.push_back(succ_lg);
-          }
-        }
-      }
-    }
-  }
-
-  int max_normal_lane_count = 0;
-  for (const auto *lg : path_lgs) {
-    int normal_lane_count = 0;
-    for (const auto &lane : lg->lane_info) {
-      const auto *sd_lane = INTERNAL_PARAMS.sd_map_data.GetSDLaneInfoById(lane.id);
-      if (sd_lane && sd_lane->type == cem::message::env_model::LaneType::LANE_HARBOR_STOP) {
-        SD_COARSE_MATCH_TYPE2_LOG << "Skip harbor-stop lane: " << lane.id << " in lane group: " << lg->id;
-        continue;
-      }
-      normal_lane_count++;
-    }
-
-    if (normal_lane_count > max_normal_lane_count) {
-      max_normal_lane_count = normal_lane_count;
-      SD_COARSE_MATCH_TYPE2_LOG << "Found new max normal lane count: " << normal_lane_count << " in lane group: " << lg->id;
-    }
-  }
-
-  return max_normal_lane_count;
 }
 
 std::pair<int, int> CoarseMatching::GetReachableLaneCountToRamp(const JunctionInfoCity &junction) {

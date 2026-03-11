@@ -119,6 +119,11 @@ private:
 
     void UpdateKeeperStatus(const int type);
 
+    bool JudgeRangeValid(const uint64_t main_lane_id, 
+                         const uint64_t sub_lane_1_id, 
+                         const uint64_t sub_lane_2_id,
+                         const int type);
+
     bool buildTopoTypeUpdate(const uint64_t main_lane_id, 
                              const uint64_t sub_lane_1_id, 
                              const uint64_t sub_lane_2_id, 

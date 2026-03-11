@@ -398,9 +398,6 @@ struct HistSelectRoadInfo {
     return separator_ids == rhs.separator_ids && is_left == rhs.is_left;
   }  // 只要「路沿id + 左右侧」相同就认为位置相同
 };
-struct MergeTopoInfo {
-  double distance_to_ego;
-  uint32_t type;
-};
+
 }  // namespace cem::fusion::navigation
 #endif

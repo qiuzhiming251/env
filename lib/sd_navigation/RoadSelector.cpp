@@ -19,8 +19,6 @@ std::vector<uint64_t> RoadSelector::SelectOptRoad(const std::vector<JunctionInfo
   isSplitRoadSelectWorked = false;
   bev_ego_lane_related_   = bev_ego_lane_related;
   history_guide_laneids_  = history_guide_laneids;
-  SD_COARSE_MATCH_TYPE2_LOG << "[SelectOptRoad]: bev_sections_in：";
-  SD_COARSE_MATCH_TYPE2_LOG << fmt::format("{}", bev_sections_in);
 
   // use sd point to select road
   int                               road_split_num     = 0;
@@ -91,6 +89,8 @@ std::vector<uint64_t> RoadSelector::SelectOptRoad(const std::vector<JunctionInfo
     process_split_flag = true;
   }
 
+  SD_COARSE_MATCH_TYPE2_LOG << "[SelectOptRoad]: bev_sections_in：";
+  SD_COARSE_MATCH_TYPE2_LOG << fmt::format("{}", bev_sections_in);
   SD_COARSE_MATCH_TYPE2_LOG << "lprocess_split_flag: " << process_split_flag;
 
   if ((!nearby_junctions.empty()) && (process_split_flag)) {
@@ -104,7 +104,7 @@ std::vector<uint64_t> RoadSelector::SelectOptRoad(const std::vector<JunctionInfo
     SD_COARSE_MATCH_TYPE2_LOG << "junction_type: " << type_str;
     SD_COARSE_MATCH_TYPE2_LOG << "split_merge_direction: " << dir_str;
     SD_COARSE_MATCH_TYPE2_LOG << "Selected nearest junction: id=" << selected_junction.junction_id << ", type=" << type_str
-                              << ", split_merge_direction=" << dir_str << ", offset=" << selected_junction.offset;
+                        << ", split_merge_direction=" << dir_str << ", offset=" << selected_junction.offset;
     SD_COARSE_MATCH_TYPE2_LOG << "junctions_info_city details:";
 
     SD_COARSE_MATCH_TYPE2_LOG << fmt::format("{}", selected_junction);
@@ -113,39 +113,36 @@ std::vector<uint64_t> RoadSelector::SelectOptRoad(const std::vector<JunctionInfo
 
     switch (junction_type) {
       case JunctionTypeCity::RoadSplit: {
-        // 使用代价函数选择最优section
-        std::vector<int> ego_section_indexs = {};  /// 自车所在的section index
-        for (unsigned int i = 0; i < bev_sections_in.size(); i++) {
-          for (unsigned int j = 0; j < bev_sections_in[i].size(); j++) {
-            if (bev_ego_lane_related_.find(bev_sections_in[i][j]) != bev_ego_lane_related_.end()) {
-              ego_section_indexs.emplace_back(i);
-              break;
-            }
+        // RoadSplit 逻辑：根据 split_merge_direction 选择路段
+        size_t num_sections = bev_sections_in.size();
+        if (split_merge_dir == DirectionSplitMerge::Left) {
+          isSplitRoadSelectWorked = true;
+          /*后续添加main to main 的判断*/
+          SD_COARSE_MATCH_TYPE2_LOG << "[SelectOptRoad] Selected index 0 for RoadSplit (Left)";
+          std::vector<std::vector<uint64_t>> sections;
+          sections       = SelectSectionInStraight(bev_sections_in, selected_junction);
+          selected_index = SelectMainRoadSectionNoNavi(sections);
+        } else if (split_merge_dir == DirectionSplitMerge::Right) {
+          isSplitRoadSelectWorked = true;
+          selected_index          = bev_sections_in.size() - 1;
+          SD_COARSE_MATCH_TYPE2_LOG << "Selected index " << selected_index << " for RoadSplit (Right)";
+        } else if (split_merge_dir == DirectionSplitMerge::Straight) {
+          isSplitRoadSelectWorked = true;
+          if (num_sections == 2) {
+            selected_index = 0;
+            SD_COARSE_MATCH_TYPE2_LOG << "Selected index 0 for RoadSplit (Straight, 2 sections)";
+          } else if (num_sections == 3) {
+            selected_index = 1;
+            SD_COARSE_MATCH_TYPE2_LOG << "Selected index 1 for RoadSplit (Straight, 3 sections)";
+          } else {
+            selected_index = 0;
+            SD_COARSE_MATCH_TYPE2_LOG << "Selected default index 0 for RoadSplit (Straight, " << num_sections << " sections)";
           }
         }
-
-        // 使用形点选路结果作为主要权重
-        std::vector<uint64_t> road_selected_sd = SelectRoadWithSdPts(bev_sections_in, section_separators);
-
-        // 使用代价函数选择最优section
-        double min_cost = std::numeric_limits<double>::max();
-        for (size_t i = 0; i < bev_sections_in.size(); ++i) {
-          double total_cost =
-              CalculateCombinedSectionCost(static_cast<int>(i), bev_sections_in, ego_section_indexs, road_selected_sd, split_merge_dir);
-
-          if (total_cost < min_cost) {
-            min_cost       = total_cost;
-            selected_index = static_cast<int>(i);
-          }
-        }
-
-        SD_COARSE_MATCH_TYPE2_LOG << " [RoadSelect] final selected index: " << selected_index << " with cost: " << min_cost;
-
-        isSplitRoadSelectWorked = true;
         break;
       }
       default:
-        selected_index = SelectMainRoadSectionNoNavi(bev_sections_in, section_separators);
+        selected_index = SelectMainRoadSectionNoNavi(bev_sections_in);
         if (selected_index == -1) {
           /*后续改为返回空值*/
           selected_index = 0;
@@ -159,8 +156,8 @@ std::vector<uint64_t> RoadSelector::SelectOptRoad(const std::vector<JunctionInfo
   } else {
     // 没有符合条件的路口，走无导航选主路逻辑
     SD_COARSE_MATCH_TYPE2_LOG << "No suitable RoadMerge or RoadSplit junction within "
-                                 "200m, selecting main road section";
-    int selected_section_index = SelectMainRoadSectionNoNavi(bev_sections_in, section_separators);
+                           "200m, selecting main road section";
+    int selected_section_index = SelectMainRoadSectionNoNavi(bev_sections_in);
     fmt::format_to(info_buffer, "  no_navi_idx:{}", selected_section_index);
     if (bev_sections_in.size() > 1)
       isSplitRoadSelectWorked = true;
@@ -169,29 +166,35 @@ std::vector<uint64_t> RoadSelector::SelectOptRoad(const std::vector<JunctionInfo
   }
 }
 
-std::vector<uint64_t> RoadSelector::HoldOptRoad(const std::vector<std::vector<uint64_t>> &bev_sections_in,
-                                                const BevRouteInfo &complete_section_info, const std::vector<uint64_t> &road_selected) {
-  const std::vector<SeparatorInfo> &section_separators = complete_section_info.separators;
+std::vector<uint64_t> RoadSelector::HoldOptRoad(
+    const std::vector<std::vector<uint64_t>> &bev_sections_in,
+    const BevRouteInfo &complete_section_info,
+    const std::vector<uint64_t> &road_selected) {
+  const std::vector<SeparatorInfo> &section_separators =
+      complete_section_info.separators;
 
-  if (!section_separators.empty() && !road_selected.empty() && bev_sections_in.size() > 1) {
-    auto it = std::find_if(bev_sections_in.begin(), bev_sections_in.end(), [&](const auto &sec) { return sec == road_selected; });
+  if (!section_separators.empty() && !road_selected.empty() &&
+      bev_sections_in.size() > 1) {
+    auto it =
+        std::find_if(bev_sections_in.begin(), bev_sections_in.end(),
+                     [&](const auto &sec) { return sec == road_selected; });
     if (it == bev_sections_in.end()) {
       hist_road_infos_.clear();
       return road_selected;
     }
-    const int                    kMinStableCount = 3;
-    static std::vector<uint64_t> road_confirmed  = road_selected;
-    std::vector<uint64_t>        hold_road_selected;
-    uint64_t                     curr_sep_idx = 0;
-    bool                         curr_is_left = true;
-    bool                         found        = false;
+    const int kMinStableCount = 3;
+    static std::vector<uint64_t> road_confirmed = road_selected;
+    std::vector<uint64_t> hold_road_selected;
+    uint64_t curr_sep_idx = 0;
+    bool curr_is_left = true;
+    bool found = false;
     for (uint64_t sep_idx = 0; sep_idx < section_separators.size(); ++sep_idx) {
       if (sep_idx < bev_sections_in.size()) {
         // 路沿左侧对应 bev_sections_in[sep_idx]
         if (bev_sections_in.at(sep_idx) == road_selected) {
           curr_sep_idx = sep_idx;
           curr_is_left = true;
-          found        = true;
+          found = true;
           break;
         }
 
@@ -199,7 +202,7 @@ std::vector<uint64_t> RoadSelector::HoldOptRoad(const std::vector<std::vector<ui
         if (bev_sections_in.at(sep_idx + 1) == road_selected) {
           curr_sep_idx = sep_idx;
           curr_is_left = false;
-          found        = true;
+          found = true;
           break;
         }
       }
@@ -210,11 +213,10 @@ std::vector<uint64_t> RoadSelector::HoldOptRoad(const std::vector<std::vector<ui
       hold_road_selected = road_selected;
       return hold_road_selected;
     }
-    const auto        &curr_sep_ids = section_separators.at(curr_sep_idx).edge_ids;
+    const auto &curr_sep_ids = section_separators.at(curr_sep_idx).edge_ids;
     HistSelectRoadInfo curr{curr_sep_ids, curr_is_left, road_selected};
     hist_road_infos_.insert(hist_road_infos_.begin(), curr);
-    if (hist_road_infos_.size() > kMinStableCount)
-      hist_road_infos_.pop_back();
+    if (hist_road_infos_.size() > kMinStableCount) hist_road_infos_.pop_back();
 
     if (hist_road_infos_.size() < kMinStableCount) {
       road_confirmed = road_selected;
@@ -222,12 +224,15 @@ std::vector<uint64_t> RoadSelector::HoldOptRoad(const std::vector<std::vector<ui
 
     for (size_t i = 0; i < hist_road_infos_.size(); ++i) {
       const auto &hist_road_info = hist_road_infos_[i];
-      SD_FINE_MATCH_LOG << "frame[" << i << "] side= " << (hist_road_info.is_left ? 'L' : 'R')
-                        << " separator_ids= " << fmt::format("{}", hist_road_info.separator_ids)
+      SD_FINE_MATCH_LOG << "frame[" << i
+                        << "] side= " << (hist_road_info.is_left ? 'L' : 'R')
+                        << " separator_ids= "
+                        << fmt::format("{}", hist_road_info.separator_ids)
                         << " road= " << fmt::format("{}", hist_road_info.road);
     }
 
-    bool hist_stable = (hist_road_infos_.size() == kMinStableCount) && hist_road_infos_.at(0) == hist_road_infos_.at(1) &&
+    bool hist_stable = (hist_road_infos_.size() == kMinStableCount) &&
+                       hist_road_infos_.at(0) == hist_road_infos_.at(1) &&
                        hist_road_infos_.at(1) == hist_road_infos_.at(2);
 
     // SD_FINE_MATCH_LOG << "hist_stable: " << hist_stable;
@@ -332,9 +337,9 @@ std::vector<uint64_t> RoadSelector::SelectRoadWithSdPts(const std::vector<std::v
   }
   ego_s_global += ego_s_offset;
   constexpr double kEdgePointOffs = -50.0;
-  double           min_s          = (use_edge_points) ? start_pt.x() - kEdgePointOffs : -100;
-  double           max_s          = (use_edge_points) ? start_pt.x() + 200 : 200;
-  double           current_s      = 0.0;
+  double min_s = (use_edge_points) ? start_pt.x() - kEdgePointOffs : -100;
+  double max_s     = (use_edge_points) ? start_pt.x() + 200 : 200;
+  double current_s = 0.0;
   for (size_t i = 0; i < mpp_sections.size(); ++i) {
     const auto &section         = mpp_sections[i];
     double      section_start_s = current_s;
@@ -380,8 +385,10 @@ std::vector<uint64_t> RoadSelector::SelectRoadWithSdPts(const std::vector<std::v
       auto bev_lane = INTERNAL_PARAMS.raw_bev_data.GetLaneInfoById(lane_id);
       if ((bev_lane) && (bev_lane->line_points.size() > 2)) {
         std::vector<Eigen::Vector2f> bev_eigen_points;
-        float                        bev_lane_front = bev_lane->line_points.back().x;
-        float start_overlap = (std::fabs(start_pt.x() - bev_lane_front) < 20.0) ? (bev_lane_front - 30.0) : start_pt.x();
+        float bev_lane_front = bev_lane->line_points.back().x;
+        float start_overlap = (std::fabs(start_pt.x() - bev_lane_front) < 20.0)
+                                  ? (bev_lane_front - 30.0)
+                                  : start_pt.x();
         for (const auto &bev_point : bev_lane->line_points) {
           if (use_edge_points && (bev_point.x < start_overlap)) {
             continue;
@@ -531,18 +538,11 @@ size_t RoadSelector::SelectSectionWithMostLanes(const std::vector<std::vector<ui
 }
 
 /// 无导航动作参考时选主路
-int RoadSelector::SelectMainRoadSectionNoNavi(const std::vector<std::vector<uint64_t>> &bev_sections_in,
-                                              const std::vector<SeparatorInfo>         &section_separators) {
+int RoadSelector::SelectMainRoadSectionNoNavi(const std::vector<std::vector<uint64_t>> &bev_sections_in) {
   if (bev_sections_in.empty()) {
     SD_COARSE_MATCH_TYPE2_LOG << "bev_sections_in is empty";
     return -1;
   }
-
-  if (bev_sections_in.size() == 1) {
-    SD_COARSE_MATCH_TYPE2_LOG << "Only one section, return index 0";
-    return 0;
-  }
-
   int              selected_section_index = -1;
   std::vector<int> ego_section_indexs     = {};  /// 自车所在的section index
   for (unsigned int i = 0; i < bev_sections_in.size(); i++) {
@@ -556,34 +556,82 @@ int RoadSelector::SelectMainRoadSectionNoNavi(const std::vector<std::vector<uint
 
   SD_COARSE_MATCH_TYPE2_LOG << "ego_section_indexs: " << fmt::format("[{}]", fmt::join(ego_section_indexs, ", "));
 
-  std::vector<uint64_t>      dummy_road_selected_sd = {};
-  std::vector<SeparatorInfo> dummy_separators       = {};
-  if (INTERNAL_PARAMS.sd_map_data.GetSDRouteInfoPtr()) {
-    const auto &sd_route = INTERNAL_PARAMS.sd_map_data.GetSDRouteInfoPtr();
-    if (sd_route && !sd_route->mpp_sections.empty()) {
-      dummy_road_selected_sd = SelectRoadWithSdPts(bev_sections_in, section_separators);
+  if (bev_sections_in.size() > 1) {
+    if (ego_section_indexs.size() == 1) {
+      selected_section_index = ego_section_indexs.front();
+      SD_COARSE_MATCH_TYPE2_LOG << "Selected ego section index: " << selected_section_index;
+    } else {
+      if (bev_sections_in[0].size() == 1 && bev_sections_in[1].size() > 1) {
+        uint64_t main_road_lane_num = 0;
+        if (INTERNAL_PARAMS.sd_map_data.GetSDRouteInfoPtr() &&
+            INTERNAL_PARAMS.sd_map_data.GetSDRouteInfoPtr()->navi_start.section_id != 0) {
+          const auto *ego_section =
+              INTERNAL_PARAMS.sd_map_data.GetSDSectionInfoById(INTERNAL_PARAMS.sd_map_data.GetSDRouteInfoPtr()->navi_start.section_id);
+          if (ego_section != nullptr) {
+            main_road_lane_num = ego_section->lane_num;
+          }
+        }
+        SD_COARSE_MATCH_TYPE2_LOG << "main_road_lane_num: " << main_road_lane_num;
+        bool valid_flag = false;
+        if (main_road_lane_num > 1) {
+          for (const auto &section1_laneid : bev_sections_in[1]) {
+            for (auto &history_id : history_guide_laneids_) {
+              if (history_id == section1_laneid) {
+                valid_flag = true;
+                break;
+              }
+            }
+            if (valid_flag) {
+              break;
+            }
+          }
+        }
+        SD_COARSE_MATCH_TYPE2_LOG << "valid_flag: " << valid_flag;
+        if (valid_flag) {
+          selected_section_index = 1;
+          SD_COARSE_MATCH_TYPE2_LOG << "Selected section index: 1 (valid_flag true)";
+        }
+      }
     }
   }
-
-  // 使用代价函数选择最优section
-  std::vector<int>    dummy_ego_indexs = ego_section_indexs;
-  DirectionSplitMerge dummy_direction  = DirectionSplitMerge::Unknown;
-
-  double min_cost       = std::numeric_limits<double>::max();
-  int    selected_index = 0;
-
-  for (size_t i = 0; i < bev_sections_in.size(); ++i) {
-    double total_cost =
-        CalculateCombinedSectionCost(static_cast<int>(i), bev_sections_in, dummy_ego_indexs, dummy_road_selected_sd, dummy_direction);
-
-    if (total_cost < min_cost) {
-      min_cost       = total_cost;
-      selected_index = static_cast<int>(i);
+  if (selected_section_index == -1) {
+    if (!ego_section_indexs.empty()) {
+      /// egoindex多个 选一个唯一一个存在历史推荐laneid的
+      std::set<int> ego_index_set = {};
+      if (!history_guide_laneids_.empty()) {
+        for (int ego_index : ego_section_indexs) {
+          for (auto &bev_laneid_tmp : bev_sections_in[ego_index]) {
+            for (auto &his_id : history_guide_laneids_) {
+              if (his_id == bev_laneid_tmp) {
+                ego_index_set.insert(ego_index);
+              }
+            }
+          }
+        }
+      }
+      if(ego_index_set.size() == 1) {
+        selected_section_index = *ego_index_set.begin();
+      }
+      /// egoindex多个 选一个车道数最多的
+      if (selected_section_index == -1) {
+        int max_lane_num = 0;
+        for (int ego_index : ego_section_indexs) {
+          if (bev_sections_in[ego_index].size() > max_lane_num) {
+            max_lane_num           = bev_sections_in[ego_index].size();
+            selected_section_index = ego_index;
+          }
+        }
+      }
+      /// 选择第一个egoindex兜底
+      if (selected_section_index == -1) {
+        selected_section_index = ego_section_indexs.front();
+      }
+    } else {
+      selected_section_index = 0;
     }
   }
-
-  SD_COARSE_MATCH_TYPE2_LOG << " [SelectMainRoadSectionNoNavi] final selected index: " << selected_index << " with cost: " << min_cost;
-  return selected_index;
+  SD_COARSE_MATCH_TYPE2_LOG << "Final selected section index: " << selected_section_index;
+  return selected_section_index;
 }
 
 /**
@@ -636,10 +684,10 @@ std::vector<std::vector<uint64_t>> RoadSelector::SelectSectionInStraight(const s
     // if ((sections[sections.size() - 1].size() == 1) || (sections[sections.size() - 1].size() == ramp_lanenum))
     // // if (sections[sections.size() - 1].size() == 1)
     // {
-    sections.pop_back();
-    SD_COARSE_MATCH_TYPE2_LOG << "SelectSectionInStraight: sections.pop_back()";
-  }
-  /*后续添加多段section的处理*/
+      sections.pop_back();
+      SD_COARSE_MATCH_TYPE2_LOG << "SelectSectionInStraight: sections.pop_back()";
+    }
+    /*后续添加多段section的处理*/
 
   return sections;
 }
@@ -666,112 +714,6 @@ int RoadSelector::GetLanenumOfRamp(const JunctionInfoCity &junction, SplitPassTy
   SD_COARSE_MATCH_TYPE2_LOG << " GetLanenumOfRamp:  " << lanenum;
 
   return lanenum;
-}
-
-double RoadSelector::CalculateCombinedSectionCost(int section_index, const std::vector<std::vector<uint64_t>> &bev_sections_in,
-                                                  const std::vector<int> &ego_section_indexs, const std::vector<uint64_t> &road_selected_sd,
-                                                  const DirectionSplitMerge &split_merge_dir) {
-  // 计算基础代价（考虑自车位置和车道数差异等）
-  double cost                = 0.0;
-  double ego_in_section_cost = 0.0;
-  double lane_diff_cost      = 0.0;
-  double history_lane_cost   = 0.0;
-  // double single_lane_cost    = 0.0;
-
-  const double kEgoInSectionCost        = 0.0;
-  const double kEgoNotInSectionCostHigh = 5.0;
-  const double kEgoNotInSectionCostLow  = 1.0;
-  const double kLaneDiffThreshold       = 2.0;
-  const double kLaneDiffCostFactor      = 1.0;
-  const double kHistoryLaneCostFactor   = 2.0;
-  // const double kSingleLaneCost          = 2.0;
-
-  // 获取自车所在section的车道数
-  uint64_t main_road_lane_num = 0;
-  if (INTERNAL_PARAMS.sd_map_data.GetSDRouteInfoPtr() && INTERNAL_PARAMS.sd_map_data.GetSDRouteInfoPtr()->navi_start.section_id != 0) {
-    const auto *ego_section =
-        INTERNAL_PARAMS.sd_map_data.GetSDSectionInfoById(INTERNAL_PARAMS.sd_map_data.GetSDRouteInfoPtr()->navi_start.section_id);
-    if (ego_section != nullptr) {
-      main_road_lane_num = ego_section->lane_num;
-    }
-  }
-
-  // 获取当前section的车道数
-  uint64_t current_section_lane_num = bev_sections_in[section_index].size();
-
-  // 如果section_index跟属于自车section，给予较低的代价
-  bool is_ego_in_section = std::find(ego_section_indexs.begin(), ego_section_indexs.end(), section_index) != ego_section_indexs.end();
-  if (is_ego_in_section) {
-    ego_in_section_cost += kEgoInSectionCost;
-  } else {
-    ego_in_section_cost += kEgoNotInSectionCostHigh;  // 自车不在该section中，增加代价
-  }
-
-  // 考虑车道数差异
-  if (main_road_lane_num > 0) {
-    int lane_diff = std::abs(static_cast<int>(current_section_lane_num) - static_cast<int>(main_road_lane_num));
-    SD_COARSE_MATCH_TYPE2_LOG << " [CalculateCombinedSectionCost] current_section_lane_num " << current_section_lane_num
-                              << " main_road_lane_num: " << main_road_lane_num << " lane_diff: " << lane_diff;
-    // 只有车道数差异大于2时才计入cost
-    if (lane_diff > kLaneDiffThreshold) {
-      lane_diff_cost += lane_diff * kLaneDiffCostFactor;
-    }
-  }
-
-  // 考虑是否存在历史推荐车道
-  int history_lane_count = 0;
-  for (const auto &lane_id : bev_sections_in[section_index]) {
-    if (std::find(history_guide_laneids_.begin(), history_guide_laneids_.end(), lane_id) != history_guide_laneids_.end()) {
-      history_lane_count++;
-    }
-  }
-  history_lane_cost -= history_lane_count * kHistoryLaneCostFactor;
-
-  // // 考虑当前section车道数
-  // if (current_section_lane_num == 1) {
-  //   single_lane_cost += kSingleLaneCost;  // 单车道section增加代价
-  // }
-
-  // 基础总cost代价
-  double base_cost = ego_in_section_cost + lane_diff_cost + history_lane_cost;
-
-  // 形点选路权重：如果当前section是形点选路结果，则降低代价
-  double sd_weight            = 0.0;
-  int    selected_by_sd_index = -1;
-  if (!road_selected_sd.empty()) {
-    for (size_t i = 0; i < bev_sections_in.size(); ++i) {
-      if (bev_sections_in[i] == road_selected_sd) {
-        selected_by_sd_index = static_cast<int>(i);
-        break;
-      }
-    }
-  }
-  if (selected_by_sd_index != -1 && section_index == selected_by_sd_index) {
-    sd_weight = -10.0;  // 显著降低代价，优先选择形点选路结果
-  }
-
-  // split_merge_dir权重：作为次要参考
-  double direction_weight = 0.0;
-  if (split_merge_dir == DirectionSplitMerge::Left && section_index == 0) {
-    direction_weight = -2.0;  // 稍微降低代价
-  } else if (split_merge_dir == DirectionSplitMerge::Right && section_index == static_cast<int>(bev_sections_in.size() - 1)) {
-    direction_weight = -2.0;  // 稍微降低代价
-  } else if (split_merge_dir == DirectionSplitMerge::Straight) {
-    // 对于直行，选择中间的section（如果存在）
-    if (bev_sections_in.size() == 3 && section_index == 1) {
-      direction_weight = -2.0;
-    } else if (bev_sections_in.size() == 2 && section_index == 0) {
-      direction_weight = -2.0;
-    }
-  }
-
-  // 总代价 = 基础代价 + 形点权重 + 方向权重
-  double total_cost = base_cost + sd_weight + direction_weight;
-
-  SD_COARSE_MATCH_TYPE2_LOG << " [CalculateCombinedSectionCost] section " << section_index << " base_cost: " << base_cost
-                            << " sd_weight: " << sd_weight << " direction_weight: " << direction_weight << " total_cost: " << total_cost;
-
-  return total_cost;
 }
 
 }  // namespace navigation

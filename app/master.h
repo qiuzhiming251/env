@@ -6,10 +6,13 @@
 #include "lib/base/landmark_buffer.h"
 #include "lib/common/debug_infos/debug_infos.h"
 #include "lib/localmap_construction/crossroad_construction/crossroad_construction.h"
+#include "lib/localmap_construction/stopline_mapping.h"
+#include "lib/localmap_construction/stopline_mapping_e2e.h"
 #include "lib/localmap_construction/routing_map_stopline_processor.h"
 #include "lib/localmap_construction/stopline_mapping.h"
 #include "lib/localmap_construction/traffic_flow_mapping.h"
 #include "lib/localmap_construction/traffic_light_mapping.h"
+#include "lib/localmap_construction/traffic_light_mapping_e2e.h"
 #include "lib/map_fusion/extend_lane.h"
 #include "lib/map_fusion/lane_guidance.h"
 #include "lib/map_fusion/speed_limit_fusion.h"
@@ -22,12 +25,15 @@
 #include "lib/sd_navigation/SdNavigationCity.h"
 #include "lib/sd_navigation/SdNavigationHighway.h"
 #include "master_interface.h"
+#include "modules/msg/drivers_msgs/sdmap_inform_service.pb.h"
+#include "modules/msg/orin_msgs/e2e_map.pb.h"
+#include "modules/msg/perception_msgs/e2e_traffic_info.pb.h"
+#include "modules/msg/state_machine_msgs/top_state.pb.h"
 #include "modules/msg/localization_msgs/map_match.pb.h"
 
 namespace cem {
 namespace fusion {
 using cem::message::sensor::MapType;
-
 class Master : public MasterInterface {
  public:
   std::unique_ptr<Messenger> messenger_;
@@ -36,6 +42,8 @@ class Master : public MasterInterface {
   std::unique_ptr<PreProcessor>                        pre_processor_;
   std::unique_ptr<StoplineMapping>                     stopline_mapping_;
   std::unique_ptr<CrossWalkTracker>                    crosswalk_mapping_;
+  std::unique_ptr<e2e::StoplineMapping>                stopline_mapping_e2e_;
+  std::unique_ptr<e2e::TrafficLightMapping>            traffic_light_mapping_e2e_;
   std::unique_ptr<TrafficLightMapping>                 traffic_light_mapping_;
   std::unique_ptr<RoutingMapStopLineProcessor>         routing_map_stopline_processor_;
   std::unique_ptr<FusionManager>                       fusion_manager_;
@@ -50,6 +58,8 @@ class Master : public MasterInterface {
   std::unique_ptr<MapSourceSwitch>                     map_source_switch_;
 
   GeometryMatchInfo   bev_ld_map_geometry_match_info_;  // geometry match info(bev match ld)
+
+  std::shared_ptr<byd::msg::orin::e2e_map::E2EMap> e2e_map_ptr_{nullptr};
 
   std::string conf_abs_path_;
 
@@ -91,7 +101,9 @@ class Master : public MasterInterface {
 
   virtual void OnPerceptionObstaclesInfoCallback(const std::shared_ptr<byd::msg::perception::PerceptionObstacles> &msg);
 
-  virtual void OnEnvModelLidaRoadedgeCallback(const std::shared_ptr<byd::msg::env_model::LocalMapInfo> &msg);
+  virtual void OnEnvModelLidaRoadedgeCallback(const std::shared_ptr<byd::msg::env_model::LocalMapInfo>& msg);
+
+  virtual void OnE2eMapCallback(const std::shared_ptr<byd::msg::orin::e2e_map::E2EMap> &msg);
 
   virtual void OnPlanResultCallback(const std::shared_ptr<byd::msg::planning::PLanningResultProto> &msg);
 
@@ -105,15 +117,17 @@ class Master : public MasterInterface {
 
   virtual void OnDriversEventCallback(const std::shared_ptr<byd::msg::drivers::Event> &msg);
 
-  void OnSDTrafficLightCallback(const std::shared_ptr<byd::msg::drivers::sdTrafficLight>& msg) final;
+  virtual void OnTopStateCallback(const std::shared_ptr<byd::msg::state_machine::TopState>& msg);
+
+  void OnE2ETrafficResultCallBack(const std::shared_ptr<byd::msg::perception::E2ETrafficResult> &msg) final;
 
   void OnMsgObstaclesCallback(const std::shared_ptr<byd::msg::pnc::ObjInfoFusn> &msg) final;
 
-  void OnMapLocationResultCallback(const std::shared_ptr<byd::modules::localization::MapMatchResult> &msg) final;
+  void OnE2EMapRawCallBack(const std::shared_ptr<byd::msg::orin::e2e_map::E2EMap> &msg) final;
 
-  void OnMapLocationResultBaiduCallback(
-      const std::shared_ptr<byd::modules::localization::MapMatchResult> &msg)
-      final;
+  void OnSDTrafficLightCallback(const std::shared_ptr<byd::msg::drivers::sdTrafficLight> &msg) final;
+
+  void OnMapLocationResultCallback(const std::shared_ptr<byd::modules::localization::MapMatchResult> &msg) final;
 
  private:
   void LoadConfig();
@@ -129,6 +143,9 @@ class Master : public MasterInterface {
   MapConvertType MapToggleMode(GeometryMatchResult &match_detail);
 
  bool GetIsOnHighwayFlag(const RoutingMapPtr& routing_map_raw);
+
+ void GetLDMapMatcherEmergencyLanes(const std::vector<MatchMaker::LaneMatchPair> &lane_match_pair,
+            const RoutingMapPtr routing_map_ptr, std::vector<uint64_t>& emergency_laneids);
 
 };
 

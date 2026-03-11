@@ -70,6 +70,12 @@ class NullLog {
 #define FLOG_TLIGHT NULL_LOG
 #endif
 
+#if defined(HNOA_L3) && (HNOA_L3)
+#define HNOA_L3_LOG  AINFO
+#else
+#define HNOA_L3_LOG  NULL_LOG
+#endif
+
 #if defined(SD_COARSE_MATCH) && (SD_COARSE_MATCH)
 #define SD_COARSE_MATCH_LOG AINFO
 #else
@@ -107,9 +113,15 @@ class NullLog {
 #endif
 
 #if defined(SD_ENV_INFO_LOG) && (SD_ENV_INFO_LOG)
-#define SD_ENV_INFO_LOG AINFO
+#define SD_ENV_INFO_LOG  AINFO
 #else
-#define SD_ENV_INFO_LOG NULL_LOG
+#define SD_ENV_INFO_LOG  NULL_LOG
+#endif
+
+#if defined(PC_X86_RUN_FLAG) && (PC_X86_RUN_FLAG)
+#define LOG_LP AINFO
+#else
+#define LOG_LP NULL_LOG
 #endif
 
 #if defined(SD_NAVIGATION_DEBUG) && (SD_NAVIGATION_DEBUG)

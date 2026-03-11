@@ -123,7 +123,7 @@ class BevMapProcessor
                        const bool& low_precision_flag,
                        std::string& debug_infos);
 
-  void DeleteLaneTopology(const std::function<std::vector<const BevSplitInfo*>(uint64_t)>& LaneSplitGetter,
+  void ModifyLanesUturn(const std::function<std::vector<const BevSplitInfo*>(uint64_t)>& LaneSplitGetter,
                        const std::function<std::vector<const BevMergeInfo*>(uint64_t, bool)>& LaneMergeGetter,
                        const std::function<LaneType(uint64_t)>& LaneTypeGetter,
                        const std::shared_ptr<cem::message::env_model::RoutingMap>& ld_map,
@@ -282,7 +282,8 @@ class BevMapProcessor
 
   void UpadateBreakMemory(bool update_lane_id_flag, std::unordered_map<uint64_t, BevMapProcessor::BreakTopoRecord> &memory_break_result, std::optional<BreakLaneResult> break_lane_result);
 
-  void ConfirmEmergencyLane(const std::function<LaneType(uint64_t)> &LaneTypeGetter, std::string &debug_infos, bool EgoIsEmergency);
+  void ConfirmEmergencyLane(const std::function<LaneType(uint64_t)> &LaneTypeGetter, std::string &debug_infos, bool EgoIsEmergency,
+                            bool LowPrecisionFlag);
 
   void RemoveDuplicateLaneIds();
 

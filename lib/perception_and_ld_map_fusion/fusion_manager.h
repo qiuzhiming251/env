@@ -18,7 +18,6 @@
 #include "lib/perception_and_ld_map_fusion/data_preprocessor/lane_type_checker.h"
 // #include "lib/perception_and_ld_map_fusion/visualization/visualizer.h"
 #include "lib/map_fusion/map_fusion.h"
-#include "message/env_model/navigation/navigation.h"
 
 namespace cem {
 namespace fusion {

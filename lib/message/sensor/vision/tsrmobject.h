@@ -105,8 +105,8 @@ enum TrafficLightColorType {  //红绿灯颜色
   TLC_BLURRING_MODE   = 9,
   TLC_BLOCK_FAILED    = 10,
   TLC_NONE_LIGHT      = 11,
-  TLC_CLOUD_NOMATCH   = 12,
-  TLC_NOT_MATCH       = 13,
+  TLC_NOT_MATCH       = 12,
+  TLC_CLOUD_NOMATCH   = 13,
 };
 
 enum TrafficLightShapeType { //红绿灯形状
@@ -143,6 +143,14 @@ struct TrfAttributesInfo
     TrafficLightShapeType traffic_light_shape = TLS_UNKNOWN;
     uint32_t traffic_light_num = 0;
     bool traffic_light_flashing = false;
+    // 红绿灯朝向置信度
+    float traffic_light_direction_conf = 0.0;
+    // 红绿灯形状置信度
+    float traffic_light_shape_conf = 0.0;
+    // 红绿灯颜色置信度
+    float traffic_light_color_conf = 0.0;
+    // 是否被障碍物遮挡
+    bool is_occluded = false;
 };
 
 enum class LightTurn {

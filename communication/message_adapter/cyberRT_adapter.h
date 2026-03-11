@@ -2,27 +2,29 @@
 #define DDS_ADAPTER_H_
 #include "common/utility.h"
 #include "base/params_manager/params_manager.h"
-#include "modules/msg/drivers_msgs/veh_info.pb.h"
-#include "modules/msg/orin_msgs/lane_fusion_msgs.pb.h"
-#include "modules/msg/drivers_msgs/ins.pb.h"
-#include "modules/msg/basic_msgs/header.pb.h"
-#include "modules/msg/environment_model_msgs/local_map_info.pb.h"
-#include "modules/msg/localization_msgs/localization_info.pb.h"
-#include "modules/msg/basic_msgs/module_status.pb.h"
-#include "modules/msg/perception_msgs/perception_traffic_info.pb.h"
-#include "modules/msg/environment_model_msgs/sr_element.pb.h"
-#include "modules/msg/orin_msgs/routing_map.pb.h"
-#include "modules/msg/orin_msgs/map_event.pb.h"
-#include "message/internal_message.h"
+#include "common/utility.h"
 #include "lib/message/env_model/stop_line/stop_line.h"
 #include "lib/message/env_model/occ/occ.h"
 #include "modules/msg/basic_msgs/geometry.pb.h"
-#include "modules/msg/orin_msgs/sm_msgs.pb.h"
+#include "modules/msg/basic_msgs/header.pb.h"
+#include "modules/msg/basic_msgs/module_status.pb.h"
+#include "modules/msg/drivers_msgs/ins.pb.h"
+#include "modules/msg/drivers_msgs/veh_info.pb.h"
+#include "modules/msg/environment_model_msgs/local_map_info.pb.h"
+#include "modules/msg/environment_model_msgs/sr_element.pb.h"
+#include "modules/msg/localization_msgs/localization_info.pb.h"
+#include "modules/msg/orin_msgs/e2e_map.pb.h"
 #include "modules/msg/orin_msgs/lane_fusion_msgs.pb.h"
+
+#include "modules/msg/orin_msgs/map_event.pb.h"
+#include "modules/msg/orin_msgs/routing_map.pb.h"
+#include "modules/msg/orin_msgs/sm_msgs.pb.h"
+#include "modules/msg/perception_msgs/perception_traffic_info.pb.h"
 #include "modules/msg/st_msgs/planning_result.pb.h"
 #include "modules/msg/planning_msgs/plan_func_state.pb.h"
 #include "modules/msg/drivers_msgs/navi_traffic_info.pb.h"
 #include "modules/msg/drivers_msgs/event.pb.h"
+#include "modules/msg/state_machine_msgs/top_state.pb.h"
 #include "lib/message/sensor/localization/map_match.h"
 
 namespace cem {
@@ -177,6 +179,11 @@ void AdaptInput2Internal(
     const std::shared_ptr<byd::msg::env_model::LocalMapInfo> &raw_lidar_roadedge_info,
     LidarRoadEdgeInfoPtr adapted_lidar_roadedge_info);
 
+/* E2EMap */
+void AdaptInput2Internal(
+    const std::shared_ptr<byd::msg::orin::e2e_map::E2EMap> &raw_e2e_map_info,
+    E2eMapPtr adapted_e2e_map_info);
+
 void AdaptInput2Internal(const std::shared_ptr<byd::msg::planning::PLanningResultProto> &raw_planning_result,
                          PLanningResultPtr                                      adapted_planning_result_info);
 
@@ -186,9 +193,19 @@ void AdaptInput2Internal(const std::shared_ptr<byd::msg::pnc::PlanFuncState> &ra
 void AdaptInput2Internal(
     const std::shared_ptr<byd::msg::orin::sm_msgs::MsgSM_BYD_CAN_Output> &raw_can1,
     CAN1Ptr adapted_can);
+
 void AdaptInput2Internal(
     const std::shared_ptr<byd::msg::perception::OCCInfo> &msg,
-    std::shared_ptr<cem::env_model::occ::OCCInfo> occInfo );
+    std::shared_ptr<cem::env_model::occ::OCCInfo> occInfo);
+
+void AdaptInput2Internal(const std::shared_ptr<byd::msg::state_machine::TopState> &raw_top_state,
+                         TopStatePtr adapted_top_state);
+
+// void AdaptInput2Internal(
+//     const std::shared_ptr<byd::modules::localization::MapMatchResult>
+//         &raw_map_match_result,
+//     std::shared_ptr<cem::message::sensor::MapMatchResultBaidu>
+//         adapted_map_match_result);
 
 void AdaptInput2Internal(
     const std::shared_ptr<byd::modules::localization::MapMatchResult>

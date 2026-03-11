@@ -130,13 +130,14 @@ struct TrfObjectInfoSection {
 struct PolygonInfo {
   byd::common::math::Polygon2d polygon;
 
-  uint64_t       bev_id{0};
-  Vec2d          inter_start;
-  Vec2d          inter_end;
-  double         dis_start_in_section{0.0};
-  double         dis_end_in_section{0.0};
+  uint64_t bev_id{0};
+  Vec2d    inter_start;
+  Vec2d    inter_end;
+  double   dis_start{0.0};
+  double   dis_end{0.0};
   SDSectionInfo *section_ptr_start{nullptr};
   SDSectionInfo *section_ptr_end{nullptr};
+
 
   [[nodiscard]] std::string DebugString() const;
 };

@@ -19,6 +19,7 @@
 
 #include <algorithm>
 #include <array>
+#include <array>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -145,13 +146,7 @@ std::string JunctionInfo::DebugString() const {
 
 std::string PolygonInfo::DebugString() const {
   fmt::memory_buffer buf;
-  fmt::format_to(buf, "PolyInfo bev_id:{}  dis:[{:.2f},{:.2f}]", bev_id, dis_start_in_section, dis_end_in_section);
-  if (section_ptr_start != nullptr) {
-    fmt::format_to(buf, " section_start:{} point:[{:.2f},{:.2f}]", section_ptr_start->id, inter_start.x(), inter_start.y());
-  }
-  if (section_ptr_end != nullptr) {
-    fmt::format_to(buf, " section_end:{} point:[{:.2f},{:.2f}]", section_ptr_end->id, inter_end.x(), inter_end.y());
-  }
+  fmt::format_to(buf, "PolyInfo bev_id:{}  dis:[{:.2f},{:.2f}]", bev_id, dis_start, dis_end);
 
   return {buf.data(), buf.size()};
 }
@@ -1115,7 +1110,7 @@ std::optional<TrafficLights> TrafficLightDiscern::ChooseTrafficLightInJunction(s
   if (!track_angle_sort) {
     std::sort(obj_res.begin(), obj_res.end(),
               [](const TrfObjectInfoSection &lhs, const TrfObjectInfoSection &rhs) { return lhs.junction_pos->x < rhs.junction_pos->x; });
-    if (obj_res.size() >= 2 && std::fabs(obj_res.at(0).junction_pos->x - obj_res.at(1).junction_pos->x) < 3 &&
+    if (obj_res.size() >= 2 && (obj_res.at(0).junction_pos->x - obj_res.at(1).junction_pos->x) < 3 &&
         std::fabs(obj_res.at(0).junction_pos->y - obj_res.at(1).junction_pos->y) > 3) {
       NEW_LOG << "the_first_2_obj_pos_x_is_close.";
       std::sort(obj_res.begin(), obj_res.begin() + 2, [](const TrfObjectInfoSection &lhs, const TrfObjectInfoSection &rhs) {
@@ -1552,9 +1547,9 @@ void TrafficLightDiscern::GetEgoEdgeWidthLaneGroup() {
   if (it_lane_group == sd_lane_groups_map_.end() || ((it_lane_group->second) == nullptr) || it_lane_group->second->lane_info.empty()) {
     return;
   }
-  bool ego_is_last_wait_ = std::all_of(it_lane_group->second->lane_info.begin(), it_lane_group->second->lane_info.end(),
-                                       [](const LaneInfo &rhs) { return rhs.type == LaneType::LANE_LEFT_WAIT; });
-  if (ego_is_last_wait_) {
+  bool is_last_wait = std::all_of(it_lane_group->second->lane_info.begin(), it_lane_group->second->lane_info.end(),
+                                  [](const LaneInfo &rhs) { return rhs.type == LaneType::LANE_LEFT_WAIT; });
+  if (is_last_wait) {
     NEW_LOG << fmt::format("ego_lane_group_id:{} has_left_wait.", it_lane_group->second->id);
     return;
   }
@@ -1709,7 +1704,7 @@ void TrafficLightDiscern::JunctionBasePolygon() {
     return;
   }
 
-  std::vector<LineSegInfo> section_segs;
+  std::vector<LineSegment2d> section_segs;
 
   Vec2d point_0{};
   Vec2d point_1{};
@@ -1729,7 +1724,7 @@ void TrafficLightDiscern::JunctionBasePolygon() {
         if (point_0.DistanceTo(point_1) < min_dis) {
           continue;
         }
-        section_segs.emplace_back(LineSegInfo{LineSegment2d{point_0, point_1}, &mpp_section});
+        section_segs.emplace_back(point_0, point_1);
       } else {
         point_1.set_x(section_point.x());
         point_1.set_y(section_point.y());
@@ -1760,47 +1755,36 @@ void TrafficLightDiscern::JunctionBasePolygon() {
     }
     polygon.Init(points);
     ego_dis_polygon = polygon.DistanceTo(ego_point);
-    std::vector<std::tuple<Vec2d, SDSectionInfo *>> start_vec;
-    std::vector<std::tuple<Vec2d, SDSectionInfo *>> end_vec;
-
-    PolygonInfo polygon_info;
+    std::vector<std::pair<Vec2d, double>> start_vec;
+    std::vector<std::pair<Vec2d, double>> end_vec;
 
     double dis{0.0};
-    for (const auto &seg_tmp : section_segs) {
-      if (seg_tmp.section_ptr == nullptr) {
-        continue;
-      }
-      const auto &line_seg = seg_tmp.line_seg;
+    for (const auto &line_seg : section_segs) {
       dis += line_seg.length();
       Vec2d start;
       Vec2d end;
       if (!polygon.GetOverlap(line_seg, &start, &end)) {
         continue;
       };
-      start_vec.emplace_back(start, seg_tmp.section_ptr);
-      end_vec.emplace_back(end, seg_tmp.section_ptr);
-      NEW_LOG << fmt::format("inter_sec start_point:[{:.2f},{:.2f}]  end_point:[{:.2f},{:.2f}]  id:{}", start.x(), start.y(), end.x(),
-                             end.y(), seg_tmp.section_ptr->id);
+      double dis_start = line_seg.ProjectOntoUnit(start);
+      double dis_end   = line_seg.ProjectOntoUnit(end);
+      start_vec.emplace_back(start, dis_start + dis - line_seg.length());
+      end_vec.emplace_back(end, dis_end + dis - line_seg.length());
+      // NEW_LOG << fmt::format(
+      //     "inter_sec start_point:[{:.2f},{:.2f}] proj_s:{:.2f} pos:{:.2f}  end_point:[{:.2f},{:.2f}] proj_s{:.2f} len:{:.2f}  pos:{:.2f}",
+      //     start.x(), start.y(), dis_start, start_vec.back().second, end.x(), end.y(), dis_end, line_seg.length(), end_vec.back().second);
     }
     if (start_vec.empty() || end_vec.empty()) {
       continue;
     }
 
-    polygon_info.bev_id            = junc.id;
-    polygon_info.polygon           = polygon;
-    polygon_info.inter_start       = std::get<0>(start_vec.front());
-    polygon_info.section_ptr_start = std::get<1>(start_vec.front());
-    polygon_info.inter_end         = std::get<0>(end_vec.back());
-    polygon_info.section_ptr_end   = std::get<1>(end_vec.back());
-    if ((polygon_info.section_ptr_start == nullptr) || (polygon_info.section_ptr_end == nullptr)) {
-      continue;
-    }
-
-    if (!SetJunctionBaseOnPolygon(polygon_info)) {
-      continue;
-    }
-
-    polygon_info_.push_back(polygon_info);
+    auto &polygon_info       = polygon_info_.emplace_back();
+    polygon_info.bev_id      = junc.id;
+    polygon_info.polygon     = polygon;
+    polygon_info.inter_start = start_vec.front().first;
+    polygon_info.dis_start   = start_vec.front().second;
+    polygon_info.inter_end   = end_vec.back().first;
+    polygon_info.dis_end     = end_vec.back().second;
     NEW_LOG << polygon_info_.back().DebugString();
   }
 }

@@ -2555,8 +2555,7 @@ int BevDataProcessor::CountLanesPassedZero() const {
     if (!lane.geos || lane.geos->empty())
       continue;
     const auto &p0 = lane.geos->front();
-    const auto &p1 = lane.geos->back();
-    if (p0.x() < 0.0 && p1.x() > 0.0) {
+    if (p0.x() < 0.0) {
       ++cnt;
     }
   }

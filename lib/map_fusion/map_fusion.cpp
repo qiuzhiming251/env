@@ -466,6 +466,84 @@ bool MapFusion::ReplaceHdmapAttrSegWithBevAttrSeg(const BevLaneMarker* bev_lm,co
     AERROR << "start_index out of bounds in bev_lm->line_points";
     return false;
   }
+
+  // 根据bev_segs_raw里面形点最多形点颜色染色，如果白色的和其他颜色一样多优先赋值其他颜色
+  std::vector<LaneMarkerColor> color_segs_raw;
+  for (const auto& bev_seg_raw : bev_segs_raw) {
+    // 统计指定范围内各color的出现次数
+    std::unordered_map<PointColor, size_t> color_count_map; // key=color值，value=出现次数
+    for (size_t i = bev_seg_raw.start_index; i <= bev_seg_raw.end_index; ++i) {
+      const auto& curr_point = bev_lm->line_points[i];
+      color_count_map[curr_point.color]++;
+    }
+
+    // 处理空计数（理论上不会触发，因start≤end且索引合法）
+    if (color_count_map.empty()) {
+      AWARN << "Warning: No color counted in range [" << bev_seg_raw.start_index << ", " << bev_seg_raw.end_index << "]!";
+      continue;
+    }
+
+    //筛选最高频颜色（默认颜色为白色）
+    PointColor most_bev_color = PointColor::BEV_LMC__WHITE;
+    size_t max_count = 0;
+    for (const auto& pair : color_count_map) {
+      PointColor curr_color = pair.first;
+      size_t curr_count = pair.second;
+
+      // 1. 非白色：次数>最大值 → 更新；次数=最大值 → 也更新（优先非白色）
+      // 2. 白色：仅当次数>当前最大值时才更新（同次数时不替换非白色）
+      if (curr_color != PointColor::BEV_LMC__WHITE) {
+        if (curr_count >= max_count) { // 非白色同频次优先
+          max_count = curr_count;
+          most_bev_color = curr_color;
+        }
+      } else {
+        if (curr_count > max_count) { // 白色仅次数更大时才选中
+          max_count = curr_count;
+          most_bev_color = curr_color;
+        }
+      }
+    }
+
+    // 将bev_color转化为routing_map的color
+    LaneMarkerColor most_map_color = LaneMarkerColor::LMC_UNKNOWN;
+    switch (most_bev_color) {
+      case PointColor::BEV_LMC__WHITE:
+          most_map_color = LaneMarkerColor::LMC_WHITE;
+          break;
+      case PointColor::BEV_LMC__YELLOW:
+          most_map_color = LaneMarkerColor::LMC_YELLOW;
+          break;
+      case PointColor::BEV_LMC__UNKNOWN:
+          most_map_color = LaneMarkerColor::LMC_UNKNOWN; 
+          break;
+      case PointColor::BEV_LMC__BLUE:
+          most_map_color = LaneMarkerColor::LMC_BLUE;
+          break;
+      case PointColor::BEV_LMC__GREEN:
+          most_map_color = LaneMarkerColor::LMC_GREEN;
+          break;
+      case PointColor::BEV_LMC__RED:
+          most_map_color = LaneMarkerColor::LMC_RED;
+          break;
+      default:
+          most_map_color = LaneMarkerColor::LMC_UNKNOWN;
+          break;
+    }
+
+    // 将最高频颜色存入输出容器
+    color_segs_raw.push_back(most_map_color);
+  }
+
+  // AINFO << "*******ColorSeg******";
+  // AINFO << "lanemarker id: " << bev_lm->id;
+  // std::stringstream color_str;
+  // for (auto &color : color_segs_raw){
+  //   color_str << static_cast<int>(color) << ", ";
+  // }
+  // AINFO << "color: " << color_str.str();
+  // AINFO << "*************************";
+
   int last_cut_point = 0;
   Point2D point_out      = route_lm->points[0];
   //1.BEV起点切到HDMap，保留HDMap更早的landmarker
@@ -488,12 +566,14 @@ bool MapFusion::ReplaceHdmapAttrSegWithBevAttrSeg(const BevLaneMarker* bev_lm,co
   }
 
   //2.中途BEV切到HDMap，保留对应的landmarker
-  int cut_point, bev_type = 0; 
+  int cut_point, bev_type = 0;
+  LaneMarkerColor color_type = LaneMarkerColor::LMC_UNKNOWN; 
   bool cut_point_exist = false;
   bool tail_exist = false;
   for (size_t i = 0; i < bev_segs_raw.size(); i++)
   {
     bev_type = static_cast<int>(bev_segs_raw[i].type);
+    color_type = color_segs_raw[i];
     if (bev_segs_raw[i].end_index >= bev_lm->line_points.size()) {
       if (DEBUG_INFO)AERROR << "end_index out of bounds in bev_lm->line_points";
       continue;
@@ -584,7 +664,7 @@ bool MapFusion::ReplaceHdmapAttrSegWithBevAttrSeg(const BevLaneMarker* bev_lm,co
         route_lm_new->line_type = route_lm->line_type;
         break;
     }
-    route_lm_new->line_color = route_lm->line_color;
+    route_lm_new->line_color = color_type;
     if (DEBUG_INFO)
       AINFO << " id:" << route_lm_new->id << "cut point:" << cut_point << " last_cut_point:" << last_cut_point
             << " line type:" << static_cast<int>(route_lm_new->line_type) << " from:" << route_lm_new->points[0].x << ","
@@ -636,7 +716,7 @@ bool MapFusion::ReplaceHdmapAttrSegWithBevAttrSeg(const BevLaneMarker* bev_lm,co
     } else {
       route_lm_new->line_type = route_lm->line_type;
     }
-    route_lm_new->line_color = route_lm->line_color;
+    route_lm_new->line_color = color_type;
     if (DEBUG_INFO)
       AINFO << " id:" << route_lm_new->id << "cut point:" << last_cut_point << " line type:" << static_cast<int>(route_lm_new->line_type)
             << " from:" << route_lm_new->points[0].x << "," << route_lm_new->points[0].y

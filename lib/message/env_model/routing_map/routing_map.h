@@ -682,11 +682,11 @@ struct TrafficLightStatus {
   uint32_t              traffic_light_num = 0;
   std::vector<uint32_t> lane_ids          = {};
   bool                  is_navi_light     = false;
+  bool                  stopline_is_virtual=false;
   uint64_t              traffic_obj_id{0};
   uint64_t              perception_sequence{0};
   uint64_t              stay_prev_counter{0};
   uint64_t              invalid_counter{0};
-  bool                  stopline_is_virtual = false;
   double                distance_to_stopline{0.0};
   bool                  traffic_match_cloud_file{false};
 

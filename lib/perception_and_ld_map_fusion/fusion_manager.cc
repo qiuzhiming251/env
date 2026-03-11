@@ -152,16 +152,6 @@ void FusionManager::Process() {
       }
     }
   }
-  INTERNAL_PARAMS.geos_match_merge_data.ClearContainer();
-  for(auto& bev_lane : bev_map_preprocessor_->GetData()->lane_infos) {
-    auto merge_info = GetFarMergeInfo(bev_lane.id, 0, 500);
-    if(!merge_info.empty() && (merge_info[0]->type == 1 || merge_info[0]->type == 2)) {
-        MergeTopoInfo merge_topo;
-        merge_topo.type = merge_info[0]->type;
-        merge_topo.distance_to_ego = merge_info[0]->distance_to_ego;
-        INTERNAL_PARAMS.geos_match_merge_data.SetMatchMergeInfo(bev_lane.id, merge_topo);
-    }
-  }
   if (nullptr != bev_map_preprocessor_) {
     if (nullptr != bev_map_) {  // 保持自车道在lane track丢失.e.g. ORIN-1370824
       std::optional<Eigen::Isometry3d> T_local_ego_ =
@@ -176,7 +166,7 @@ void FusionManager::Process() {
       }
     }
     if (nullptr != build_lane_topology) {
-      build_lane_topology->BuildNewMergeSplitTopo(bev_map_, ld_map_, bev_map_ids);
+      build_lane_topology->BuildNewMergeSplitTopo(bev_map_, ld_map_, bev_map_ids, debug_info_);
     }
   }
 
@@ -606,7 +596,7 @@ void FusionManager::BuildFarTopoInfo(
 void FusionManager::BuildFarTopoForward(uint64_t bev_id, uint32_t input_group_id, std::set<uint32_t>& visited_groups) {
   // 检查是否已经访问过当前group_id，防止无限递归
   if (visited_groups.find(input_group_id) != visited_groups.end()) {
-    // AINFO << "<<WORNING>>: visited_groups: " <<  input_group_id;
+    AINFO << "<<WORNING>>: visited_groups: " <<  input_group_id;
     return;
   }
   visited_groups.insert(input_group_id);
@@ -644,8 +634,7 @@ void FusionManager::BuildFarTopoForward(uint64_t bev_id, uint32_t input_group_id
       return;
     }
   }
-
-  std::unordered_set<uint32_t> connect_succesor_groups;
+  // 先排除split，之后再有connect就是merge-conncet了
   for (const auto& [ele_id, info] : connect_info_) {
     uint32_t info_group_from = info.group_from;
     if (info_group_from == input_group_id) {
@@ -653,26 +642,11 @@ void FusionManager::BuildFarTopoForward(uint64_t bev_id, uint32_t input_group_id
           iter_target != info.target_to.end();
           ++iter_target) {
         const auto& [lane_id, target] = *iter_target;
-        // 存在一个group_from有多个connect后继
-        connect_succesor_groups.insert(target.group_to);
+        uint32_t group_to = target.group_to;
+        BuildFarTopoForward(bev_id, group_to, visited_groups);
       }
     }
   }
-  
-  // 一个group_from有多个connect后继或者没有connect后继就return结束
-  if (connect_succesor_groups.size() == 1) {
-    // 取出唯一的元素送入BuildFarTopoForward
-    uint32_t group_to = *connect_succesor_groups.begin();
-    BuildFarTopoForward(bev_id, group_to, visited_groups);
-  } 
-  #ifdef PRINT_BEV_LDMAP_MATCHING_INFO
-    if (connect_succesor_groups.empty()) {
-      AINFO << "Failed build Fartopo---Empty succ: bev_id :" << bev_id;
-    } else if (connect_succesor_groups.size() > 1) {
-      AINFO << "Failed build Fartopo---succ.size = " << connect_succesor_groups.size();
-    }
-  #endif
-
   return;
 }
 
@@ -952,29 +926,22 @@ std::vector<const FarTopoInfo*> FusionManager::GetFarMergeInfo(
   uint64_t bev_id, 
   double min_distance, 
   double max_distance) const {
-  const FarTopoInfo* min_info = nullptr;
-  double min_dist = std::numeric_limits<double>::max();
-  
+  std::vector<const FarTopoInfo*> ret;
+  std::set<std::pair<uint64_t, int>> recorde_ret;
   for (const auto& far_merge_info : far_merge_info_) {
     if (far_merge_info.bev_id == bev_id && 
         far_merge_info.distance_to_ego < max_distance &&
         far_merge_info.distance_to_ego > min_distance) {
 
-        // 检查是否是更小的距离
-        if (far_merge_info.distance_to_ego < min_dist) {
-          min_dist = far_merge_info.distance_to_ego;
-          min_info = &far_merge_info;
+        // 一个bev同时匹配到两个group,都merge到一个拓扑点，会重复
+        // 尝试插入元素，如果已存在则不会插入
+        auto result = recorde_ret.insert(
+        std::make_pair(bev_id, static_cast<int>(far_merge_info.distance_to_ego)));
+        // result.second 为 true 表示成功插入，false 表示元素已存在
+        if (result.second ){
+          ret.push_back(&far_merge_info);  
         }
       }
-  }
-  
-  std::vector<const FarTopoInfo*> ret;
-  if (min_info != nullptr) {
-    ret.push_back(min_info);
-    // AINFO << "FarMerge bev: " << min_info->bev_id
-    //       << " distance: " << min_info->distance_to_ego
-    //       << " group-from: " << min_info->group_from
-    //       << " group-to: " << min_info->group_to;
   }
   return ret;
 }
@@ -1124,9 +1091,10 @@ void FusionManager::PrintLaneTopoInfo() {
       ldmap_ids_string += std::to_string(ldmap_lane_id);
       ldmap_ids_string += " ";
     }
+    debug_info_ += "map_lanes_to: " + ldmap_ids_string + ")\n";
     std::string result = "[ bev" + std::to_string(target_to_bev_id) +
                          " == g" + std::to_string(group_to) + 
-                         " ld: " + ldmap_ids_string + ") ];\n";
+                         " ld: " + ldmap_ids_string + ") ];";
 
     debug_info_ += result;
   }

@@ -103,7 +103,7 @@ void CrossRoadConstruction::Reset() {
   road_connector_->Reset();
   data_manager_->Reset();
   is_cross_road_out_ = false;
-  last_dnp_status_ = -1;
+  // last_dnp_status_ = -1;
   noa2icc =false;
 }
 
@@ -120,7 +120,7 @@ void CrossRoadConstruction::Process(BevMapInfoPtr &bev_map, const Eigen::Isometr
 
   switch (cross_state_) {
     case CrossState::INIT:
-    InitAction();
+    InitAction();//自动跳转predict
     XLOG <<  "@@@@CrossState::INIT";
     break;
     // case CrossState::PREDICTION:
@@ -147,56 +147,50 @@ void CrossRoadConstruction::Process(BevMapInfoPtr &bev_map, const Eigen::Isometr
       bool suppression = (hd_map_suppression_reason == 2 || hd_map_suppression_reason == 3 || 
                   hd_map_suppression_reason == 5 || hd_map_suppression_reason == 6 ||
                   hd_map_suppression_reason == 15 || hd_map_suppression_reason == 21 ||
-                  hd_map_suppression_reason == 31 || hd_map_suppression_reason == 32);
+                  hd_map_suppression_reason == 31 || hd_map_suppression_reason == 32 || hd_map_suppression_reason == 14);
+      bool next_junction_out_200 = (hd_map_suppression_reason == 14);
                   if(routing_map_ptr  ) XLOG << "/////////////////// TIME " << routing_map_ptr->header.timestamp; 
       XLOG << "suppression " << suppression << "  hd_map_suppression_reason " << hd_map_suppression_reason << " noa2icc " <<  noa2icc << " last_dnp_status_ "  <<  last_dnp_status_ << " distance2next_junction " << distance2next_junction;
-        
-        if(suppression &&  noa2icc &&  last_dnp_status_ ==4 ){//小路口前后大路口 切图失败+其他远导致降级也会触发这个条件-》后果小路口过不去 但是概率不大  CANOAC2-98784
+      if(!suppression){//不等任意一个
+        return;
+      }
+      //下面流程默认切图抑制 优先全补 不全补的话补1m
+     if(next_junction_out_200){//剩下是小路口 CANOAC2-98784
+        switch (cross_state_) {
+              case CrossState::PREDICTION:
+              XLOG <<"@@@@CrossState::PREDICTION";
+              PredictionAction();//更新虚拟线
+              //判断是否跳转到接线状态
+              if (cross_toplane_processor_->FindClosetLane(virtual_egoroad_->virtual_lane()) &&
+                  road_connector_->GenerateConnectLane(virtual_egoroad_->virtual_lane())) {
+                road_connector_->SetDrGeoLane(virtual_egoroad_->GetDrGeoLane());
+                XLOG << "PredictionAction to CONNECTION first!!! ";
+                cross_state_ = CrossState::CONNECTION;
+              } else {
+                XLOG << "FindClosetLane faild!!!";
+              }
+              //输出虚拟线
+              OutPutVirtualLane();
+              break;
+              case CrossState::CONNECTION:
+              XLOG <<"@@@@CrossState::CONNECTION";
+              ConnectionAction();
+              break;
+              default:
+                XLOG << "error ";
+                break;
+            }
+        XLOG << "分支 小路口/地图无路口  " ;
+
+      }else if(( last_dnp_status_ ==6) ||  (noa2icc &&  last_dnp_status_ ==4)  ){//下降沿 或者图不可信补1m
+        if(cross_state_ == CrossState::PREDICTION ){
           PredictionAction();
           CutVirtualLane();
           cross_state_ = CrossState::PREDICTION;//保持预测 防止跳到连接状态 到PREDICTION函数后不会在往下跳转
           OutPutVirtualLane();
-          XLOG << "分支 1 ";
-        // }else if(last_dnp_status_ !=6 && last_dnp_status_ != -1 ){//一直是ICC
-        }else if(last_dnp_status_ == 4 ){//一直是ICC noamap信号不会发出
-          // ReInitCrossInfo();
-          // AINFO << "!!!!!!!!!!!!!!!CrossStatePreToEnd";
-          // cross_state_ = CrossState::END;
-          XLOG << "分支 一直ICC";
-          // cross_state_ = CrossState::END;//不输出
-
-        }else if(suppression){//增加一个条件 切图失败直接退出
-          // cross_state_ = CrossState::END;
-          XLOG << "切图失败 退路口逻辑";//不输出
-          XLOG << "分支 大路口切图失败";//不输出
-        }else{//剩下是小路口 CANOAC2-98784
-          switch (cross_state_) {
-                case CrossState::PREDICTION:
-                XLOG <<"@@@@CrossState::PREDICTION";
-                PredictionAction();//更新虚拟线
-                //判断是否跳转到接线状态
-                if (cross_toplane_processor_->FindClosetLane(virtual_egoroad_->virtual_lane()) &&
-                    road_connector_->GenerateConnectLane(virtual_egoroad_->virtual_lane())) {
-                  road_connector_->SetDrGeoLane(virtual_egoroad_->GetDrGeoLane());
-                  XLOG << "PredictionAction to CONNECTION first!!! ";
-                  cross_state_ = CrossState::CONNECTION;
-                } else {
-                  XLOG << "FindClosetLane faild!!!";
-                }
-                //输出虚拟线
-                OutPutVirtualLane();
-                break;
-                case CrossState::CONNECTION:
-                XLOG <<"@@@@CrossState::CONNECTION";
-                ConnectionAction();
-                break;
-                default:
-                  XLOG << "error ";
-                  break;
-              }
-          XLOG << "分支 小路口/或者者大路口切图成功/地图无路口  " ;
-
+          XLOG << "分支 补1m ";
         }
+      }
   }
   SetCrossroadConstructionDebugInfo(bev_map);
   FLOG_CROSS << std::fixed << std::setprecision(5) << "----cross road end-----bev_map time: " << bev_map->header.timestamp
@@ -222,7 +216,14 @@ double CrossRoadConstruction::CrossRoadDis() {
 void CrossRoadConstruction::IsRightTurnOnly(const SdJunctionInfoCityPtr &junctions_ptr) {
   constexpr double EnterJunctionThreshold = 80.0;  // ego_lane 跳到其next添加拓扑的阈值
 
+  is_right_turn_only_debug_.clear();
+  is_right_turn_only_debug_["is_right_turn_only"]["before"] = is_right_turn_only_;
+  is_right_turn_only_debug_["next junction"]["before"] = next_junction_id_;
+  
   if (junctions_ptr == nullptr || routing_map_raw_ == nullptr) {
+    is_right_turn_only_debug_["is_right_turn_only"]["after"] = is_right_turn_only_;
+    is_right_turn_only_debug_["next junction"]["after"] = next_junction_id_;
+    is_right_turn_only_debug_["nullptr"] = true;
     return;
   }
 
@@ -231,10 +232,14 @@ void CrossRoadConstruction::IsRightTurnOnly(const SdJunctionInfoCityPtr &junctio
     route_id_ = routing_map_raw_->sd_route.id;
     is_right_turn_only_ = false;
     next_junction_id_ = 0;
+    is_right_turn_only_debug_["is_right_turn_only"]["after"] = is_right_turn_only_;
+    is_right_turn_only_debug_["next junction"]["after"] = next_junction_id_;
+    is_right_turn_only_debug_["initialization"] = true;
     return;
   }
 
   // Judgment before entering a right turn dedicated lane scenario.
+  is_right_turn_only_debug_["junction info"] = json::array(); // 空数组
   bool first_unreached = false;
   for (size_t i = 0; i < junctions_ptr->size(); i++) {
     // AINFO << junctions_ptr->at(i).junction_id << "  is_dedicated_right_turn_lane:  " << junctions_ptr->at(i).is_dedicated_right_turn_lane
@@ -242,6 +247,16 @@ void CrossRoadConstruction::IsRightTurnOnly(const SdJunctionInfoCityPtr &junctio
     //       << "  junction_type:   " << (int)junctions_ptr->at(i).junction_type_city
     //       << "  junction_action:   " << (int)junctions_ptr->at(i).junction_action 
     //       << "  junction offset:   " << junctions_ptr->at(i).offset;
+    
+    json temp_junction;
+    temp_junction["junction_id"] = junctions_ptr->at(i).junction_id;
+    temp_junction["is_dedicated_right_turn_lane"] = junctions_ptr->at(i).is_dedicated_right_turn_lane;
+    temp_junction["junction_state"] = (int)junctions_ptr->at(i).junction_state_city;
+    temp_junction["junction_type"] = (int)junctions_ptr->at(i).junction_type_city;
+    temp_junction["junction_action"] = (int)junctions_ptr->at(i).junction_action;
+    temp_junction["junction_offset"] = junctions_ptr->at(i).offset;
+    is_right_turn_only_debug_["junction info"].push_back(temp_junction);
+
     if (is_right_turn_only_) {
       break;
     }
@@ -308,6 +323,9 @@ void CrossRoadConstruction::IsRightTurnOnly(const SdJunctionInfoCityPtr &junctio
       }
     }
   }
+
+  is_right_turn_only_debug_["is_right_turn_only"]["after"] = is_right_turn_only_;
+  is_right_turn_only_debug_["next junction"]["after"] = next_junction_id_;
 }
 
 void CrossRoadConstruction::InitAction() {
@@ -772,6 +790,10 @@ bool CrossRoadConstruction::CrossStateToEnd() {
     }
     bool is_in_cross_has_ego_lane = data_manager_->GetIsInCrossroad() && data_manager_->is_egolane_normal() && is_crossed_road;
     // 路口前如果geolane长度大于停止线20m也退出
+    if(data_manager_->EgoLane()->line_points.empty()){
+      return true;
+    }
+
     bool is_before_has_ego_lane =
         (has_cross_road_flag && data_manager_->cross_road_dis() + 15.0 < data_manager_->EgoLane()->line_points.back().x &&
          !data_manager_->GetIsInCrossroad()) ||
@@ -860,6 +882,11 @@ void CrossRoadConstruction::SetCrossroadConstructionDebugInfo(BevMapInfoPtr &Glo
 
   // FLOG_CROSS << "CROSS_ROAD_DEBUG_INFO:" << debug_str;
   GlobalBevMapOutPut->debug_infos += debug_str;
+
+  debug_str = "";
+  debug_str = is_right_turn_only_debug_.dump();
+  GlobalBevMapOutPut->debug_infos += debug_str;
+  is_right_turn_only_debug_.clear();
 }
 
 bool CrossRoadConstruction::CrossStatePreToEnd(){

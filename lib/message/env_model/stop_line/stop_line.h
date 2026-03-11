@@ -19,6 +19,7 @@ struct StopLine
     uint8_t color = 0;
     float conf = 0.0f;
     bool is_virtual = false;
+    bool is_using_last_valid = false;
     bool is_associated_bev = false;
     std::vector<cem::message::common::Point2DF> ego_line_points = {};
     std::vector<cem::message::common::Point2DF> dr_line_points = {};

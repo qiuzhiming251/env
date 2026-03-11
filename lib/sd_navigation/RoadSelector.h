@@ -24,13 +24,14 @@ class RoadSelector {
                                       const std::vector<std::vector<uint64_t>> &bev_sections_in, const BevRouteInfo &complete_section_info,
                                       fmt::memory_buffer &info_buffer, bool &isSplitRoadSelectWorked);
 
-  std::vector<uint64_t> HoldOptRoad(const std::vector<std::vector<uint64_t>> &bev_sections_in, const BevRouteInfo &complete_section_info,
-                                    const std::vector<uint64_t> &road_selected);
+  std::vector<uint64_t> HoldOptRoad(
+      const std::vector<std::vector<uint64_t>> &bev_sections_in,
+      const BevRouteInfo &complete_section_info,
+      const std::vector<uint64_t> &road_selected);
 
  private:
   size_t SelectSectionWithMostLanes(const std::vector<std::vector<uint64_t>> &bev_sections_in);
-  int    SelectMainRoadSectionNoNavi(const std::vector<std::vector<uint64_t>> &bev_sections_in,
-                                     const std::vector<SeparatorInfo>         &section_separators);
+  int    SelectMainRoadSectionNoNavi(const std::vector<std::vector<uint64_t>> &bev_sections_in);
   /**
      *  //RoadSplit场景中 判断是否是主路到辅路场景
      *  @param junction 城市 junction 信息，包含 junction 类型、后续道路类别等
@@ -57,15 +58,10 @@ class RoadSelector {
   std::vector<Eigen::Vector2f> SparsePoints(const std::vector<Eigen::Vector2f> &points, size_t n);
   float                        CalcPointSetSimilarity(std::vector<Eigen::Vector2f> &bev_points, std::vector<Eigen::Vector2f> &sd_points);
 
-  // 计算综合section代价的函数，包含形点权重、方向权重等
-  double CalculateCombinedSectionCost(int section_index, const std::vector<std::vector<uint64_t>> &bev_sections_in,
-                                      const std::vector<int> &ego_section_indexs, const std::vector<uint64_t> &road_selected_sd,
-                                      const DirectionSplitMerge &split_merge_dir);
-
-  std::set<uint64_t>              bev_ego_lane_related_       = {};
-  std::vector<uint64_t>           history_guide_laneids_      = {};
-  bool                            use_select_road_with_sdpts_ = false;
-  std::vector<HistSelectRoadInfo> hist_road_infos_            = {};
+  std::set<uint64_t>    bev_ego_lane_related_       = {};
+  std::vector<uint64_t> history_guide_laneids_      = {};
+  bool                  use_select_road_with_sdpts_ = false;
+  std::vector<HistSelectRoadInfo> hist_road_infos_ = {};
 };
 }  //namespace navigation
 }  // namespace fusion

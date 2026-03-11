@@ -15,8 +15,6 @@
  * @date 2025-08-22
  */
 #pragma once
-#include <cstddef>
-#define PLATFORM_C_CLOUD false
 
 #include <sys/types.h>
 #include <atomic>
@@ -34,27 +32,7 @@
 #include "magic_enum/magic_enum.hpp"
 #include "nlohmann/json.hpp"
 #include "modules/msg/orin_msgs/routing_map.pb.h"
-#if (PLATFORM_C_CLOUD)
 #include "modules/common/resource_manager_interface/resource_manager_interface.h"
-#else
-namespace byd::common::resource_manager {
-struct FileInfo {
-  std::string              module_name;
-  std::string              version;
-  std::vector<std::string> file_list;
-};
-using MessagePtr      = std::shared_ptr<FileInfo>;
-using StorageCallback = std::function<int(const FileInfo &info)>;
-class ResourceManagerInterface {
- public:
-  ResourceManagerInterface(const std::string &module_name) {}
-  bool       Subscribe(const StorageCallback &cb) { return false; }
-  MessagePtr RequestSync(int timeout, int32_t retry_times = 0) { return nullptr; }
-  bool       RequestAsync(const StorageCallback &cb, int timeout = 2000, int32_t retry_times = -1) { return false; }
-  void       Release() {}
-};
-}  // namespace byd::common::resource_manager
-#endif
 #include "modules/perception/env/src/lib/common/log_custom.h"
 #include "modules/perception/env/src/lib/message/internal_message.h"
 
@@ -69,35 +47,34 @@ struct TrafficLight {
 
   std::shared_ptr<cem::message::sensor::TrfObjectInfo> traffic_obj_info{nullptr};
   cem::message::sensor::TrafficLightColorType          color{cem::message::sensor::TrafficLightColorType::TLC_NONE_LIGHT};
-  LightStatus                                          light_status;
-  uint32_t                                             traffic_light_num{1000};
-  bool                                                 traffic_light_flashing{false};
-  bool                                                 is_valid{false};
-  bool                                                 is_confirmed{false};
-  double                                               publish_time{0.0};
-  uint64_t                                             perception_seq_num{0};
-  std::string                                          traffic_source{0};
-  uint32_t                                             stay_prev_counter{0};
-  uint32_t                                             invalid_counter{0};
-  TurnType                                             turn_type{TurnType::OTHER_UNKNOWN};
+
+  uint32_t    traffic_light_num{1000};
+  bool        traffic_light_flashing{false};
+  bool        is_valid{false};
+  bool        is_confirmed{false};
+  double      publish_time{0.0};
+  uint64_t    perception_seq_num{1000};
+  std::string traffic_source{0};
+  uint32_t    stay_prev_counter{0};
+  uint32_t    invalid_counter{0};
+  TurnType    turn_type{TurnType::OTHER_UNKNOWN};
 
   byd::msg::orin::routing_map::LaneInfo::TrafficSetReason traffic_reason{byd::msg::orin::routing_map::LaneInfo::UNKNOWN_STATE};
-  double                                                  yellow_flashing_start_time = 0.0;
 };
 struct TrafficLights {
   cem::message::common::Header header;
 
-  bool                 ld_perception_is_matched{false};
-  TrafficLight         u_turn{TurnType::U_TURN};
-  TrafficLight         left{TurnType::LEFT_TURN};
-  TrafficLight         straight{TurnType::NO_TURN};
-  TrafficLight         right{TurnType::RIGHT_TURN};
-  uint                 junction_cloud_type{0};
-  double               distance_to_stopline{0.0};
-  bool                 traffic_match_cloud_file{false};
-  uint64_t             junction_tail_id{0};
-  std::vector<Point2D> stop_line;  //E2E-25158新增
-  TrafficLight         GetLightState(const TurnType &turn_type) const {
+  bool         ld_perception_is_matched{false};
+  TrafficLight u_turn{TurnType::U_TURN};
+  TrafficLight left{TurnType::LEFT_TURN};
+  TrafficLight straight{TurnType::NO_TURN};
+  TrafficLight right{TurnType::RIGHT_TURN};
+  uint         junction_cloud_type{0};
+  double       distance_to_stopline{0.0};
+  bool         traffic_match_cloud_file{false};
+  uint64_t     junction_tail_id{0};
+
+  TrafficLight GetLightState(const TurnType &turn_type) const {
     TrafficLight rev;
     switch (turn_type) {
       case message::env_model::TurnType::NO_TURN: {
@@ -180,6 +157,7 @@ struct CoordSystem {
 
 struct EgoState {
   enum class Dir { LeftStart, Unknown };
+
   Dir      ego_dir{Dir::Unknown};
   uint     index{0};
   TurnType turn_type{TurnType::OTHER_UNKNOWN};
@@ -192,11 +170,10 @@ struct TrafficLightSpecial {
 
   std::vector<uint32_t>        lane_seq_id;
   Point3D                      position;
-  Point3D                      position_ego;  //相对于自车的距离
+  Point3D                      position_ego;
   std::optional<TrfObjectInfo> matched_obj_id{std::nullopt};
-  double                       lon_factor = 1.0;
-  double                       lat_factor = 1.0;
-  [[nodiscard]] std::string    DebugString(int indent = 0) const {
+
+  [[nodiscard]] std::string DebugString(int indent = 0) const {
     std::stringstream ss_res;
     std::string       indent_str(indent, ' ');
 
@@ -302,11 +279,11 @@ struct TrafficLightJunction {
   std::vector<TrafficLightSpecial>  traffic_lights_spec;
   std::vector<TrafficLightLaneInfo> lane_info;
 
-  uint                       action{0};
-  CoordSystem                position;
-  Point3D                    position_ego;
-  uint32_t                   position_lane_seq_id{0};
-  std::vector<Point2D>       stop_line;  //透传停止线需要
+  uint        action{0};
+  CoordSystem position;
+  Point3D     position_ego;
+  uint32_t    position_lane_seq_id{0};
+
   std::vector<TrfObjectInfo> matched_obj_ids;
 
   [[nodiscard]] std::string DebugString(int indent = 0) const {

@@ -13,7 +13,7 @@
 #include "common/nlohmann/json.hpp"
 #include "fmt/format.h"
 #include "lib/common/utils/lane_geometry.h"
-#include "lib/localmap_construction/stopline_mapping.h"
+#include "lib/localmap_construction/stopline_mapping_e2e.h"
 #include "lib/sd_navigation/BevDataProcessor.h"
 #include "lib/sd_navigation/CoarseMatching.h"
 #include "lib/sd_navigation/SDMapElementExtract.h"

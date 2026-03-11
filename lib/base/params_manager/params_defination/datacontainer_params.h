@@ -26,7 +26,6 @@ using LDRoutingMap  = cem::message::env_model::RoutingMap;
 using LDRouteInfo   = cem::message::env_model::RouteInfo;
 using LDSectionInfo = cem::message::env_model::SectionInfo;
 using LDLaneInfo    = cem::message::env_model::LaneInfo;
-using MergeTopoInfo    = cem::fusion::navigation::MergeTopoInfo;
 
 using LDRoutingMapPtr      = std::shared_ptr<LDRoutingMap>;
 using LDRoutingMapConstPtr = std::shared_ptr<const LDRoutingMap>;
@@ -349,20 +348,6 @@ class BevLDMatchInfoContainer {
    std::map<uint64_t, std::vector<uint64_t>> bev_map_matched_ids_;
 };
 
-class GeosMatchMergeInfoContainer {
- public:
-   void ClearContainer() {
-      geos_matched_merge_infos_.clear();
-   }
-   std::map<uint64_t, MergeTopoInfo>& GetMatchMergeInfo() { return geos_matched_merge_infos_; }
-   void  SetMatchMergeInfo(uint64_t bev_id, MergeTopoInfo match_merge_topo) { 
-         if(geos_matched_merge_infos_.find(bev_id) == geos_matched_merge_infos_.end()) {
-            geos_matched_merge_infos_.insert({bev_id, match_merge_topo}); 
-         }
-   }
- private:
-   std::map<uint64_t, MergeTopoInfo> geos_matched_merge_infos_;
-};
 }  // namespace fusion
 }  // namespace cem
 

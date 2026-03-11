@@ -34,8 +34,7 @@ class SDMapTopologyExtractor {
   void SetBevLaneMergeTopoUseSDMap(const std::vector<MergeDetail> &sd_merge_details, BevMapInfo &bev_map);
   void PrintMergeDetails(const std::vector<MergeDetail> &merge_details);
   bool IsInLowPrecisionZone(const double merge_dist);
-  void SetBevLaneMergeTopoNew(const RoutingMapPtr routing_map_ptr, BevMapInfo &bevMap);
-  void CheckBevMergeTopo(const RoutingMapPtr routing_map_ptr, BevMapInfo &bevMap, std::map<uint64_t, MergeTopoInfo>& bev_matched_merge_infos);
+  void SetBevLaneMergeTopoNew(std::unique_ptr<FusionManager> &fusion_manager, BevMapInfo &bevMap, std::vector<MergeDetail> &merge_details);
   std::optional<Eigen::Isometry3d> GetTransform(const double& timestamp);
 
   bool IsValidLaneForMergeAssignment(const BevLaneInfo &lane);

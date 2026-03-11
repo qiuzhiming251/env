@@ -65,7 +65,7 @@ const GeometryMatchInfo& geometry_match_info) {
     }
     for (const auto &lane : cross_lanes_) {
       if (routing_lane_unmap_.find(lane.id) != routing_lane_unmap_.end()) {
-        // routing_lane_unmap_[lane.id]->points = lane.points;//直接使用历史点
+        routing_lane_unmap_[lane.id]->points = lane.points;//直接使用历史点
       }
     }
     XLOG << "不调整-"
@@ -205,7 +205,7 @@ bool RoutingMapStopLineProcessor::AdjustLDLane(RoutingMapPtr routing_map_ptr) {
         fit_points.emplace_back(lane->points[i]);
       }
       fit_points.emplace_back(dr_cut_point_);
-      
+
       lane->points.assign(lane->points.begin() + cut_index - 1, lane->points.end());
       lane->points[0].x = dr_cut_point_.x;
       lane->points[0].y = dr_cut_point_.y;
@@ -298,6 +298,24 @@ bool RoutingMapStopLineProcessor::FindTrafficLightCrossroadLane(RoutingMapPtr   
 bool RoutingMapStopLineProcessor::FindBevStopline(BevMapInfoPtr &bev_map_raw) {
   double min_dis = 100.0;
   bool   has_stop_line{false};
+  std::vector<Eigen::Vector2f> ego_lane_front_points;
+  for (size_t idx = 0; idx < bev_map_raw->lane_infos.size(); idx++)
+  {
+    auto &bev_lane = bev_map_raw->lane_infos[idx];
+    if(bev_lane.position == static_cast<uint32_t>(BevLanePosition::LANE_LOC_EGO))
+    {
+      for(auto &pt: bev_lane.line_points)
+      {
+        if(pt.x > 0)
+        {
+          Eigen::Vector2f pts;
+          pts(0) = pt.x;
+          pts(1) = pt.y;
+          ego_lane_front_points.push_back(pts);
+        }
+      }
+    }
+  }
   // 寻找35m以内的最近的且在自车前方的停止线
   for (const auto &stop_lane : bev_map_raw->stop_lines) {
     if (stop_lane.line_points.size() < 2) {
@@ -318,6 +336,78 @@ bool RoutingMapStopLineProcessor::FindBevStopline(BevMapInfoPtr &bev_map_raw) {
       continue;
     }
     min_dis = stop_lane.line_points.front().x;
+    const float HALF_LANE_WIDTH = 2.0f;
+    Eigen::Vector2f A(stop_lane.line_points[0].x, stop_lane.line_points[0].y);
+    Eigen::Vector2f B(stop_lane.line_points[1].x, stop_lane.line_points[1].y);
+    int index_A = -1;
+    float minX_A = FLT_MAX;
+    int index_B = -1;
+    float minX_B = FLT_MAX;
+    for(int i = 0; i < ego_lane_front_points.size(); i++)
+    {
+      if(fabs(A(0) - ego_lane_front_points[i](0)) < minX_A)
+      {
+        minX_A = fabs(A(0) - ego_lane_front_points[i](0));
+        index_A = i;
+      }
+      if(fabs(B(0) - ego_lane_front_points[i](0)) < minX_B)
+      {
+        minX_B = fabs(B(0) - ego_lane_front_points[i](0));
+        index_B = i;
+      }
+    }
+    float dist_diff_A = FLT_MAX;
+    float dist_diff_B = FLT_MAX;
+    int SIZE = static_cast<int>(ego_lane_front_points.size());
+    if(index_A >= 0 && SIZE >= 2 && (index_A+1) < SIZE)
+    {
+      Eigen::Vector2f C,D;
+      C(0) = ego_lane_front_points[index_A](0);
+      C(1) = ego_lane_front_points[index_A](1);
+      if(index_A == SIZE-1)
+      {
+        D(0) = ego_lane_front_points[SIZE-2](0);
+        D(1) = ego_lane_front_points[SIZE-2](1);
+      }
+      else if(index_A == 0)
+      {
+        D(0) = ego_lane_front_points[1](0);
+        D(1) = ego_lane_front_points[1](1);
+      }
+      else
+      {
+        D(0) = ego_lane_front_points[index_A+1](0);
+        D(1) = ego_lane_front_points[index_A+1](1);
+      }
+      dist_diff_A =  static_cast<int>(GetDistPointLane(A,C,D)*10.0)/10.0;
+    }
+    if(index_B >= 0 && SIZE >= 2 && (index_B+1) < SIZE)
+    {
+      Eigen::Vector2f C,D;
+      C(0) = ego_lane_front_points[index_B](0);
+      C(1) = ego_lane_front_points[index_B](1);
+      if(index_B == SIZE-1)
+      {
+        D(0) = ego_lane_front_points[SIZE-2](0);
+        D(1) = ego_lane_front_points[SIZE-2](1);
+      }
+      else if(index_B == 0)
+      {
+        D(0) = ego_lane_front_points[1](0);
+        D(1) = ego_lane_front_points[1](1);
+      }
+      else
+      {
+        D(0) = ego_lane_front_points[index_B+1](0);
+        D(1) = ego_lane_front_points[index_B+1](1);
+      }
+      dist_diff_B =  static_cast<int>(GetDistPointLane(B,C,D)*10.0)/10.0;
+    }
+    if(SIZE >= 2 && A(1)*B(1) > 0.0 && dist_diff_A > HALF_LANE_WIDTH && dist_diff_B > HALF_LANE_WIDTH)
+    {//bugfix:CNOAC2-148668
+      continue;
+    }
+
     if (GetDistPointLane(Eigen::Vector2f(0.0f, 0.0f), Eigen::Vector2f(stop_lane.line_points[0].x, stop_lane.line_points[0].y),
                          Eigen::Vector2f(stop_lane.line_points[1].x, stop_lane.line_points[1].y), bev_stopline_dis_)) {
       has_stop_line = true;
@@ -329,12 +419,12 @@ void RoutingMapStopLineProcessor::ResampleLDEgoLanePoints() {
   if (!ld_ego_lane_ || ld_ego_lane_->points.size() < 2) {
     return;
   }
-  
+
   // 计算原始点列的总长度
   double total_length = 0.0;
   std::vector<double> segment_lengths;
   segment_lengths.reserve(ld_ego_lane_->points.size() - 1);
-  
+
   for (size_t i = 0; i < ld_ego_lane_->points.size() - 1; ++i) {
     const auto& p1 = ld_ego_lane_->points[i];
     const auto& p2 = ld_ego_lane_->points[i + 1];
@@ -344,62 +434,62 @@ void RoutingMapStopLineProcessor::ResampleLDEgoLanePoints() {
     segment_lengths.push_back(seg_len);
     total_length += seg_len;
   }
-  
+
   if (total_length < 1e-6) {
     return;  // 长度太短，不需要重采样
   }
-  
+
   // 设置采样间隔（例如0.5米），可以根据实际需求调整
   const double sample_interval = 0.5;
   int num_samples = static_cast<int>(std::ceil(total_length / sample_interval));
   if (num_samples < 2) {
     num_samples = 2;  // 至少保留起点和终点
   }
-  
+
   std::vector<cem::message::env_model::Point> resampled_points;
   resampled_points.reserve(num_samples);
-  
+
   // 添加起点
   resampled_points.push_back(ld_ego_lane_->points.front());
-  
+
   // 线性插值采样
   double current_dist = 0.0;
   size_t seg_idx = 0;
   double seg_start_dist = 0.0;
-  
+
   for (int i = 1; i < num_samples - 1; ++i) {
     double target_dist = i * sample_interval;
-    
+
     // 找到目标距离所在的线段
-    while (seg_idx < segment_lengths.size() && 
+    while (seg_idx < segment_lengths.size() &&
            current_dist + segment_lengths[seg_idx] < target_dist - 1e-6) {
       current_dist += segment_lengths[seg_idx];
       seg_start_dist = current_dist;
       seg_idx++;
     }
-    
+
     if (seg_idx >= segment_lengths.size()) {
       break;  // 不应该发生，但安全处理
     }
-    
+
     // 在线段内插值
     double seg_progress = (target_dist - seg_start_dist) / segment_lengths[seg_idx];
     seg_progress = std::max(0.0, std::min(1.0, seg_progress));
-    
+
     const auto& p1 = ld_ego_lane_->points[seg_idx];
     const auto& p2 = ld_ego_lane_->points[seg_idx + 1];
-    
+
     cem::message::env_model::Point new_point;
     new_point.x = p1.x + seg_progress * (p2.x - p1.x);
     new_point.y = p1.y + seg_progress * (p2.y - p1.y);
-    
+
     resampled_points.push_back(new_point);
     // XLOG << "resampled_points "  << new_point.x  << " " << new_point.y;
   }
-  
+
   // 添加终点
   resampled_points.push_back(ld_ego_lane_->points.back());
-  
+
   // 更新车道点
   ld_ego_lane_->points = resampled_points;
   return;

@@ -674,9 +674,15 @@ void ProcessLanesTopo::SetBrokenTopoInfo(BevMapInfoPtr &bevMapPtrInput) {
 
         if (f_it != bevMapPtrInput->lane_infos.end()) {
           f_it->next_lane_ids.emplace_back(to);
+          if (f_it->next_lane_ids.size()>1) {
+            f_it->is_build_split_marker_by_map = true;
+          }
         }
         if (t_it != bevMapPtrInput->lane_infos.end()) {
           t_it->previous_lane_ids.emplace_back(from);
+          if (t_it->previous_lane_ids.size()>1) {
+            t_it->is_build_merge_marker_by_map = true;
+          }
         }
       }
     }
